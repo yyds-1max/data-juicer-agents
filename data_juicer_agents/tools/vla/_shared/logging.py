@@ -33,10 +33,15 @@ class VLARunLogger:
     @classmethod
     def create(cls, *, root: str | Path, date: str, run_id: str) -> VLARunLogger:
         run_dir = Path(root).expanduser() / "vla_runs" / date / run_id
-        run_dir.mkdir(parents=True, exist_ok=True)
+        return cls.open(run_dir)
+
+    @classmethod
+    def open(cls, run_dir: str | Path) -> VLARunLogger:
+        path = Path(run_dir).expanduser()
+        path.mkdir(parents=True, exist_ok=True)
         for name in ("events.jsonl", "commands.log", "stdout.log", "stderr.log"):
-            (run_dir / name).touch(exist_ok=True)
-        return cls(run_dir=run_dir)
+            (path / name).touch(exist_ok=True)
+        return cls(run_dir=path)
 
     def write_run_metadata(self, payload: Mapping[str, Any]) -> None:
         _json_dump(self.run_dir / "run.json", payload)
