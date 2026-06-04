@@ -21,6 +21,7 @@ _SESSION_GROUP_PRIORITY = {
     "plan": 40,
     "apply": 50,
     "dev": 60,
+    "vla": 65,
     "file": 70,
     "process": 80,
 }
