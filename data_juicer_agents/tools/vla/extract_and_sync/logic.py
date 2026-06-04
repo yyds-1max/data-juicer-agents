@@ -13,8 +13,8 @@ from data_juicer_agents.tools.vla._shared.selection import (
     validate_date,
 )
 
-EXTRACT_SCRIPT = "1_extract_data_from_bag_multi_process_ros2_U.py"
-SYNC_SCRIPT = "2_sync_data_multi_process_U.py"
+EXTRACT_SCRIPT = "1_extract_data_from_bag_multi_process_ros2_U_legacy.py"
+SYNC_SCRIPT = "2_sync_data_multi_process_U_legacy.py"
 _STAGE = "extract_and_sync"
 
 

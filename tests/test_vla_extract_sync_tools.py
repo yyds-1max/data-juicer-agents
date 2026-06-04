@@ -35,9 +35,9 @@ def test_build_extract_sync_plan_generates_one_extract_and_sync_command_per_segm
     assert result["ok"] is True
     assert len(result["segments"]) == 1
     commands = result["segments"][0]["commands"]
-    assert "1_extract_data_from_bag_multi_process_ros2_U.py" in " ".join(commands[0])
+    assert "1_extract_data_from_bag_multi_process_ros2_U_legacy.py" in " ".join(commands[0])
     assert "--data_path" in commands[0][-1]
-    assert "2_sync_data_multi_process_U.py" in " ".join(commands[1])
+    assert "2_sync_data_multi_process_U_legacy.py" in " ".join(commands[1])
     assert "seg_a_zhigu_wuhan" in commands[1][-1]
 
 
@@ -366,7 +366,7 @@ def test_extract_and_sync_logger_records_each_command(tmp_path, monkeypatch):
     assert result["ok"] is True
     command_log = (log_dir / "commands.log").read_text(encoding="utf-8")
     assert command_log.count("return_code=0") == 2
-    assert "1_extract_data_from_bag_multi_process_ros2_U.py" in command_log
-    assert "2_sync_data_multi_process_U.py" in command_log
+    assert "1_extract_data_from_bag_multi_process_ros2_U_legacy.py" in command_log
+    assert "2_sync_data_multi_process_U_legacy.py" in command_log
     assert "command stdout" in (log_dir / "stdout.log").read_text(encoding="utf-8")
     assert "command stderr" in (log_dir / "stderr.log").read_text(encoding="utf-8")
