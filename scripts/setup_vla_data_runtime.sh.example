@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -e
+
+source /media/heying/hy_data2/GT_dog/modules/message/ros2/install/setup.bash
+source /media/heying/hy_data2/GT_dog/modules/ros2_ws/src/install/setup.bash
+
+export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}:/media/heying/hy_data2/GT_dog/modules/message/shm/install/shm_msgs/lib"
+export PATH="/usr/local/cuda-12.6/bin${PATH:+:${PATH}}"
+export LD_LIBRARY_PATH="/usr/local/cuda-12.6/lib64${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+
+export AGENT_DATA_PYTHON=/usr/bin/python3.8
