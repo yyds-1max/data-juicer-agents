@@ -1,0 +1,3 @@
+from .tool import VLA_RUN_MANUAL_BOX_ANNOTATION
+
+__all__ = ["VLA_RUN_MANUAL_BOX_ANNOTATION"]
