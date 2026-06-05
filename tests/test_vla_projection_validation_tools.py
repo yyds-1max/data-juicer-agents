@@ -12,7 +12,7 @@ from data_juicer_agents.tools.vla.validate_outputs.logic import validate_outputs
 from data_juicer_agents.tools.vla.validate_outputs.tool import VLA_VALIDATE_OUTPUTS
 
 
-def test_build_projection_trajectory_plan_contains_expected_scripts():
+def test_build_projection_trajectory_plan_without_gridmap_uses_no_gridmap_mover():
     result = build_projection_trajectory_plan(
         save_path="/finish/20270515",
         save_path_temp="/finish/20270515_temp",
@@ -27,11 +27,12 @@ def test_build_projection_trajectory_plan_contains_expected_scripts():
     assert "2_pt_project/0_img2world.py" in joined
     assert "2_pt_project/4_speed_direction_odom.py" in joined
     assert "2_pt_project/2_othermethod_cjl.py" in joined
-    assert "2_pt_project/3_move_dir.py" in joined
+    assert "2_pt_project/3_move_dir_no_gridmap.py" in joined
+    assert "2_pt_project/3_move_dir.py" not in joined
     assert "cp_gridmap.py" not in joined
 
 
-def test_build_projection_trajectory_plan_optionally_includes_gridmap():
+def test_build_projection_trajectory_plan_with_gridmap_uses_gridmap_steps():
     result = build_projection_trajectory_plan(
         save_path="/finish/20270515",
         save_path_temp="/finish/20270515_temp",
@@ -45,6 +46,8 @@ def test_build_projection_trajectory_plan_optionally_includes_gridmap():
     assert names.index("copy_gridmap") < names.index("generate_trajectory")
     joined = "\n".join(" ".join(item["command"]) for item in result["steps"])
     assert "other_code/cp_gridmap.py" in joined
+    assert "2_pt_project/3_move_dir.py" in joined
+    assert "2_pt_project/3_move_dir_no_gridmap.py" not in joined
     assert "--root_data /finish/20270515_temp" in joined
 
 
@@ -280,7 +283,7 @@ def test_run_projection_and_trajectory_execute_returns_actual_output_paths(
         trajectory_root / "2_pt_project" / "0_img2world.py",
         trajectory_root / "2_pt_project" / "4_speed_direction_odom.py",
         trajectory_root / "2_pt_project" / "2_othermethod_cjl.py",
-        trajectory_root / "2_pt_project" / "3_move_dir.py",
+        trajectory_root / "2_pt_project" / "3_move_dir_no_gridmap.py",
     ]:
         script.parent.mkdir(parents=True, exist_ok=True)
         script.write_text("# legacy script placeholder\n", encoding="utf-8")
@@ -351,7 +354,7 @@ def test_run_projection_and_trajectory_timeout_writes_stage_end(tmp_path, monkey
         trajectory_root / "2_pt_project" / "0_img2world.py",
         trajectory_root / "2_pt_project" / "4_speed_direction_odom.py",
         trajectory_root / "2_pt_project" / "2_othermethod_cjl.py",
-        trajectory_root / "2_pt_project" / "3_move_dir.py",
+        trajectory_root / "2_pt_project" / "3_move_dir_no_gridmap.py",
     ]:
         script.parent.mkdir(parents=True, exist_ok=True)
         script.write_text("# legacy script placeholder\n", encoding="utf-8")

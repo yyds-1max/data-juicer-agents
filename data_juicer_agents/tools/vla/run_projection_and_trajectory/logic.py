@@ -144,6 +144,11 @@ def build_projection_trajectory_plan(
     runtime = _runtime(data_python, data_env_setup)
     project_root = trajectory_path / "NuscenesAanlysis_smart_pts_project"
     pt_project_root = trajectory_path / "2_pt_project"
+    move_results_script = (
+        pt_project_root / "3_move_dir.py"
+        if use_gridmap
+        else pt_project_root / "3_move_dir_no_gridmap.py"
+    )
 
     specs: list[tuple[str, Path, Path, list[str]]] = [
         (
@@ -173,7 +178,7 @@ def build_projection_trajectory_plan(
         (
             "move_results",
             pt_project_root,
-            pt_project_root / "3_move_dir.py",
+            move_results_script,
             ["--root_path", save_path_value, "--temp_path", str(temp_path)],
         ),
     ]
