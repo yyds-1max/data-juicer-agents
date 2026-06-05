@@ -104,7 +104,7 @@ def test_run_tracking_timeout_returns_structured_failure_and_stage_end(
     def fake_run(*args, **kwargs):
         calls.append((args, kwargs))
         if len(calls) == 1:
-            (output_root / "tracking_img").mkdir(parents=True)
+            (output_root / "tracking_img").mkdir(parents=True, exist_ok=True)
             (output_root / "img_points.txt").write_text("points\n", encoding="utf-8")
             return subprocess.CompletedProcess(
                 args=args[0], returncode=0, stdout="first ok\n", stderr=""
@@ -144,6 +144,184 @@ def test_run_tracking_timeout_returns_structured_failure_and_stage_end(
     assert "partial err\n" in (log_dir / "stderr.log").read_text(encoding="utf-8")
 
 
+def test_run_tracking_dry_run_does_not_prepare_tracking_output(tmp_path):
+    save_path_temp = tmp_path / "finish_temp"
+    clip = save_path_temp / "samples" / "20270515" / "clip_a"
+    clip.mkdir(parents=True)
+    (clip / "master_black_black_black.yaml").write_text(
+        "box: [[1, 2, 3, 4]]\n", encoding="utf-8"
+    )
+    output_root = tmp_path / "traj" / "Data" / "1_img_output"
+    output_root.mkdir(parents=True)
+    stale_points = output_root / "img_points.txt"
+    stale_points.write_text("old points\n", encoding="utf-8")
+
+    result = run_tracking(
+        save_path_temp=str(save_path_temp),
+        trajectory_root=str(tmp_path / "traj"),
+        data_env_setup=None,
+        dry_run=True,
+    )
+
+    assert result["ok"] is True
+    assert not (output_root / "tracking_img").exists()
+    assert stale_points.read_text(encoding="utf-8") == "old points\n"
+
+
+def test_run_tracking_recreates_public_tracking_dir_before_each_job(
+    tmp_path, monkeypatch
+):
+    save_path_temp = tmp_path / "finish_temp"
+    clip = save_path_temp / "samples" / "20270515" / "clip_a"
+    clip.mkdir(parents=True)
+    first_yaml = clip / "master_black_black_black.yaml"
+    second_yaml = clip / "other_red_blue.yaml"
+    first_yaml.write_text("box: [[1, 2, 3, 4]]\n", encoding="utf-8")
+    second_yaml.write_text("box: [[5, 6, 7, 8]]\n", encoding="utf-8")
+    trajectory_root = tmp_path / "traj"
+    tracking_cwd = trajectory_root / "1_onnx_tam"
+    (tracking_cwd / "bin").mkdir(parents=True)
+    (tracking_cwd / "bin" / "main").write_text(
+        "#!/usr/bin/env bash\n", encoding="utf-8"
+    )
+    output_root = trajectory_root / "Data" / "1_img_output"
+    tracking_img = output_root / "tracking_img"
+    tracking_img.mkdir(parents=True)
+    (tracking_img / "stale.jpg").write_text("stale\n", encoding="utf-8")
+    (output_root / "img_points.txt").write_text("stale points\n", encoding="utf-8")
+    calls = []
+
+    def fake_run(*args, **kwargs):
+        calls.append(args)
+        assert tracking_img.is_dir()
+        assert list(tracking_img.iterdir()) == []
+        (tracking_img / f"frame_{len(calls)}.jpg").write_text(
+            "frame\n", encoding="utf-8"
+        )
+        (output_root / "img_points.txt").write_text(
+            f"points {len(calls)}\n", encoding="utf-8"
+        )
+        return subprocess.CompletedProcess(
+            args=args[0], returncode=0, stdout="ok\n", stderr=""
+        )
+
+    monkeypatch.setattr(
+        "data_juicer_agents.tools.vla.run_tracking.logic.subprocess.run", fake_run
+    )
+
+    result = run_tracking(
+        save_path_temp=str(save_path_temp),
+        trajectory_root=str(trajectory_root),
+        data_env_setup=None,
+        dry_run=False,
+    )
+
+    assert result["ok"] is True
+    assert len(calls) == 2
+    assert (clip / "tracking_img_master_black_black_black").is_dir()
+    assert (clip / "tracking_img_other_red_blue").is_dir()
+    assert (clip / "img_master_black_black_black.txt").read_text(
+        encoding="utf-8"
+    ) == "points 1\n"
+    assert (clip / "img_other_red_blue.txt").read_text(
+        encoding="utf-8"
+    ) == "points 2\n"
+
+
+def test_run_tracking_cleans_tracking_file_and_old_points_before_job(
+    tmp_path, monkeypatch
+):
+    save_path_temp = tmp_path / "finish_temp"
+    clip = save_path_temp / "samples" / "20270515" / "clip_a"
+    clip.mkdir(parents=True)
+    (clip / "master_black_black_black.yaml").write_text(
+        "box: [[1, 2, 3, 4]]\n", encoding="utf-8"
+    )
+    trajectory_root = tmp_path / "traj"
+    tracking_cwd = trajectory_root / "1_onnx_tam"
+    (tracking_cwd / "bin").mkdir(parents=True)
+    (tracking_cwd / "bin" / "main").write_text(
+        "#!/usr/bin/env bash\n", encoding="utf-8"
+    )
+    output_root = trajectory_root / "Data" / "1_img_output"
+    output_root.mkdir(parents=True)
+    tracking_img = output_root / "tracking_img"
+    tracking_img.write_text("not a directory\n", encoding="utf-8")
+    (output_root / "img_points.txt").write_text("old points\n", encoding="utf-8")
+
+    def fake_run(*args, **kwargs):
+        assert tracking_img.is_dir()
+        assert list(tracking_img.iterdir()) == []
+        assert not (output_root / "img_points.txt").exists()
+        (tracking_img / "frame.jpg").write_text("frame\n", encoding="utf-8")
+        (output_root / "img_points.txt").write_text("new points\n", encoding="utf-8")
+        return subprocess.CompletedProcess(
+            args=args[0], returncode=0, stdout="ok\n", stderr=""
+        )
+
+    monkeypatch.setattr(
+        "data_juicer_agents.tools.vla.run_tracking.logic.subprocess.run", fake_run
+    )
+
+    result = run_tracking(
+        save_path_temp=str(save_path_temp),
+        trajectory_root=str(trajectory_root),
+        data_env_setup=None,
+        dry_run=False,
+    )
+
+    assert result["ok"] is True
+    assert (clip / "tracking_img_master_black_black_black").is_dir()
+    assert (clip / "img_master_black_black_black.txt").read_text(
+        encoding="utf-8"
+    ) == "new points\n"
+
+
+def test_run_tracking_prepare_failure_returns_structured_failure_and_stage_end(
+    tmp_path, monkeypatch
+):
+    save_path_temp = tmp_path / "finish_temp"
+    clip = save_path_temp / "samples" / "20270515" / "clip_a"
+    clip.mkdir(parents=True)
+    yaml_path = clip / "master_black_black_black.yaml"
+    yaml_path.write_text("box: [[1, 2, 3, 4]]\n", encoding="utf-8")
+    trajectory_root = tmp_path / "traj"
+    tracking_cwd = trajectory_root / "1_onnx_tam"
+    (tracking_cwd / "bin").mkdir(parents=True)
+    (tracking_cwd / "bin" / "main").write_text(
+        "#!/usr/bin/env bash\n", encoding="utf-8"
+    )
+    tracking_img = trajectory_root / "Data" / "1_img_output" / "tracking_img"
+    tracking_img.mkdir(parents=True)
+    log_dir = tmp_path / "logs"
+
+    def fail_rmtree(path):
+        raise OSError("cannot remove tracking dir")
+
+    monkeypatch.setattr(
+        "data_juicer_agents.tools.vla.run_tracking.logic.shutil.rmtree", fail_rmtree
+    )
+
+    result = run_tracking(
+        save_path_temp=str(save_path_temp),
+        trajectory_root=str(trajectory_root),
+        data_env_setup=None,
+        dry_run=False,
+        log_dir=str(log_dir),
+    )
+
+    assert result["ok"] is False
+    assert result["error_type"] == "tracking_output_prepare_failed"
+    assert result["yaml_path"] == str(yaml_path)
+    assert result["path"] == str(tracking_img)
+    assert "cannot remove tracking dir" in result["message"]
+    events = [
+        json.loads(line)["event_type"]
+        for line in (log_dir / "events.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert events == ["stage_start", "stage_end"]
+
+
 def test_run_tracking_input_accepts_cuda_env():
     args = RunTrackingInput.model_validate(
         {
@@ -173,7 +351,7 @@ def test_run_tracking_merges_cuda_env_into_subprocess_env(tmp_path, monkeypatch)
 
     def fake_run(*args, **kwargs):
         captured_env.update(kwargs["env"])
-        (output_root / "tracking_img").mkdir(parents=True)
+        (output_root / "tracking_img").mkdir(parents=True, exist_ok=True)
         (output_root / "img_points.txt").write_text("points\n", encoding="utf-8")
         return subprocess.CompletedProcess(
             args=args[0], returncode=0, stdout="ok\n", stderr=""

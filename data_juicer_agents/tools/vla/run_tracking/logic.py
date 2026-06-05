@@ -13,6 +13,12 @@ from data_juicer_agents.tools.vla._shared.runtime import data_runtime_command
 _STAGE = "run_tracking"
 
 
+class _TrackingOutputPrepareError(Exception):
+    def __init__(self, path: Path, exc: OSError) -> None:
+        super().__init__(str(exc))
+        self.path = path
+
+
 def _runtime(data_python: str, data_env_setup: str | None) -> VLARuntime:
     return VLARuntime(
         data_python=data_python,
@@ -129,6 +135,29 @@ def _replace_path(src: Path, dst: Path, kind: str) -> bool:
     return True
 
 
+def _delete_existing_path(path: Path) -> None:
+    if path.is_dir() and not path.is_symlink():
+        shutil.rmtree(path)
+    elif path.exists() or path.is_symlink():
+        path.unlink()
+
+
+def _prepare_tracking_output(output_root: Path) -> None:
+    tracking_img = output_root / "tracking_img"
+    img_points = output_root / "img_points.txt"
+
+    for path, action in (
+        (output_root, lambda: output_root.mkdir(parents=True, exist_ok=True)),
+        (tracking_img, lambda: _delete_existing_path(tracking_img)),
+        (img_points, lambda: _delete_existing_path(img_points)),
+        (tracking_img, lambda: tracking_img.mkdir(parents=True, exist_ok=False)),
+    ):
+        try:
+            action()
+        except OSError as exc:
+            raise _TrackingOutputPrepareError(path, exc) from exc
+
+
 def _text(value: str | bytes | None) -> str:
     if value is None:
         return ""
@@ -207,6 +236,26 @@ def run_tracking(
     failed_yaml_paths = []
     for job in plan["tracking_jobs"]:
         yaml_path = Path(job["yaml_path"])
+        output_root = Path(job["move_outputs"][0]["source"]).parent
+        try:
+            _prepare_tracking_output(output_root)
+        except _TrackingOutputPrepareError as exc:
+            failed_yaml_paths.append(str(yaml_path))
+            return _finish(
+                logger,
+                {
+                    **plan,
+                    "ok": False,
+                    "error_type": "tracking_output_prepare_failed",
+                    "yaml_path": str(yaml_path),
+                    "path": str(exc.path),
+                    "message": str(exc),
+                    "command_results": command_results,
+                    "completed_jobs": completed_jobs,
+                    "failed_yaml_paths": failed_yaml_paths,
+                },
+                "failed to prepare VLA tracking output directory",
+            )
         dog_yaml = Path(job["copy_yaml"]["target"])
         dog_yaml.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(yaml_path, dog_yaml)
