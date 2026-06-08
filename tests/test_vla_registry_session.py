@@ -38,3 +38,13 @@ def test_session_prompt_allows_structured_vla_tools_to_use_configured_roots():
     assert "structured VLA tools may operate on configured VLA roots" in prompt
     assert "raw_root, clip_root, finish_root, trajectory_root" in prompt
     assert "generic shell and file tools remain limited to the current working directory" in prompt
+
+
+def test_session_prompt_tells_vla_tools_not_to_guess_runtime_paths():
+    from data_juicer_agents.capabilities.session.orchestrator import DJSessionAgent
+
+    agent = DJSessionAgent(use_llm_router=False)
+    prompt = agent._session_sys_prompt()
+
+    assert "never invent data_env_setup, data_python, data_toolbox_src, or root paths" in prompt
+    assert "omit those arguments and let tool defaults resolve them from environment variables" in prompt

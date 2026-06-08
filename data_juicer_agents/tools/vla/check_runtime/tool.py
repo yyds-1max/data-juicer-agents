@@ -46,7 +46,10 @@ VLA_CHECK_RUNTIME = ToolSpec(
     name="vla_check_runtime",
     description=(
         "Verify that the Agent runtime is isolated from the legacy Python 3.8 "
-        "data-processing runtime."
+        "data-processing runtime. By default, omit data_env_setup and "
+        "data_python so this tool reads AGENT_DATA_ENV_SETUP and "
+        "AGENT_DATA_PYTHON from the environment. Do not invent or guess these "
+        "paths."
     ),
     input_model=CheckRuntimeInput,
     output_model=CheckRuntimeOutput,

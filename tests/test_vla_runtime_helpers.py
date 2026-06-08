@@ -136,3 +136,25 @@ def test_check_runtime_tool_creates_default_run_log_dir(tmp_path):
     assert result.data["run_id"] == "run_auto"
     assert result.data["log_dir"] == str(log_dir)
     assert (log_dir / "events.jsonl").exists()
+
+
+def test_check_runtime_tool_defaults_to_data_runtime_environment(
+    tmp_path, monkeypatch
+):
+    setup = tmp_path / "setup_data_runtime.sh"
+    setup.write_text("#!/usr/bin/env bash\n", encoding="utf-8")
+    monkeypatch.setenv("AGENT_DATA_ENV_SETUP", str(setup))
+    monkeypatch.setenv("AGENT_DATA_PYTHON", "/usr/bin/python3.8")
+
+    result = VLA_CHECK_RUNTIME.execute(
+        ToolContext(working_dir=str(tmp_path)),
+        {
+            "dry_run": True,
+            "run_id": "run_env_defaults",
+        },
+    )
+
+    assert result.ok is True
+    assert result.data["data_env_setup"] == str(setup)
+    assert result.data["data_env_setup_exists"] is True
+    assert result.data["data_python"] == "/usr/bin/python3.8"

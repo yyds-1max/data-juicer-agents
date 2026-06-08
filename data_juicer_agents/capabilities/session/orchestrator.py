@@ -260,6 +260,8 @@ class DJSessionAgent:
             "For those requests, structured VLA tools may operate on configured VLA roots "
             "(raw_root, clip_root, finish_root, trajectory_root) even when those roots are outside the current working directory; "
             "generic shell and file tools remain limited to the current working directory. "
+            "For VLA tools, never invent data_env_setup, data_python, data_toolbox_src, or root paths. "
+            "If the user does not explicitly provide them, omit those arguments and let tool defaults resolve them from environment variables. "
             "Default chain: vla_inspect_raw_date -> vla_check_runtime -> vla_prepare_raw_temp -> vla_extract_and_sync -> "
             "vla_list_clip_segments -> vla_prepare_finish_dataset -> vla_build_noobscenes_inputs -> "
             "vla_run_manual_box_annotation -> vla_run_tracking -> vla_run_projection_and_trajectory -> vla_validate_outputs. "
