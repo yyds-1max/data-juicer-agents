@@ -345,6 +345,24 @@ def prepare_gridmap(
             },
             "no existing VLA grid_map artifacts were found",
         )
+    if gridmap_variant == "pointcloud_to_gridmap" and not dry_run and not discovered:
+        return _finish(
+            logger,
+            {
+                **base,
+                "ok": False,
+                "error_type": "missing_generated_gridmap_artifact",
+                "gridmaps": [],
+                "prepared_gridmap_count": 0,
+                "prepared_paths": [],
+                "missing_sync_data": missing_sync_data,
+                "command_results": command_results,
+                "next_actions": [
+                    "inspect generator output, generator_script, and selected_segments"
+                ],
+            },
+            "VLA pointcloud-to-gridmap command produced no grid_map artifacts",
+        )
 
     transform_results = []
     if not dry_run:

@@ -1,4 +1,5 @@
 import json
+import subprocess
 
 from data_juicer_agents.tools.vla.prepare_gridmap.logic import prepare_gridmap
 from data_juicer_agents.tools.vla.prepare_gridmap.tool import VLA_PREPARE_GRIDMAP
@@ -86,6 +87,42 @@ def test_prepare_gridmap_pointcloud_to_gridmap_dry_run_builds_generator_command(
     assert "--base-path" in joined
     assert "--date 20270605" in joined
     assert "--segments 20260605_152856" in joined
+
+
+def test_prepare_gridmap_pointcloud_to_gridmap_fails_when_generator_creates_no_gridmap(
+    tmp_path, monkeypatch
+):
+    generator = tmp_path / "traj" / "other_code" / "pcd_to_grid.py"
+    generator.parent.mkdir(parents=True)
+    generator.write_text("# generator placeholder\n", encoding="utf-8")
+
+    def fake_run(*args, **kwargs):
+        return subprocess.CompletedProcess(
+            args=args[0], returncode=0, stdout="ok\n", stderr=""
+        )
+
+    monkeypatch.setattr(
+        "data_juicer_agents.tools.vla.prepare_gridmap.logic.subprocess.run",
+        fake_run,
+    )
+
+    result = prepare_gridmap(
+        date="20270605",
+        selected_segments=["20260605_152856"],
+        clip_root=str(tmp_path / "clip"),
+        finish_root=str(tmp_path / "finish"),
+        trajectory_root=str(tmp_path / "traj"),
+        gridmap_variant="pointcloud_to_gridmap",
+        data_python="/usr/bin/python3.8",
+        dry_run=False,
+    )
+
+    assert result["ok"] is False
+    assert result["error_type"] == "missing_generated_gridmap_artifact"
+    assert result["prepared_gridmap_count"] == 0
+    assert result["next_actions"] == [
+        "inspect generator output, generator_script, and selected_segments"
+    ]
 
 
 def test_prepare_gridmap_tool_spec_is_registered_shape():
