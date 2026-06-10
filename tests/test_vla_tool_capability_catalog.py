@@ -22,7 +22,7 @@ def _variant(capability: ToolCapability, variant_id: str) -> ToolVariant:
     raise AssertionError(f"variant not found: {capability.tool}/{variant_id}")
 
 
-def test_extract_sync_legacy_variant_is_available_but_future_variants_are_not():
+def test_extract_sync_topic_variants_expose_current_implementation_status():
     capability = find_tool_capability(
         list_tool_capabilities(scenario="navigation_vla"),
         "vla_extract_and_sync",
@@ -30,11 +30,15 @@ def test_extract_sync_legacy_variant_is_available_but_future_variants_are_not():
 
     assert capability.implementation_status == "available"
     assert _variant(capability, "u_legacy_topics").status == "available"
-    assert _variant(capability, "go2w_current_topics").status in {
-        "planned",
-        "placeholder",
-    }
+    assert _variant(capability, "go2w_current_topics").status == "available"
     assert _variant(capability, "custom_topic_mapping").status != "available"
+
+
+def test_extract_sync_current_variant_is_available_after_implementation():
+    catalog = list_tool_capabilities(scenario="navigation_vla")
+    capability = find_tool_capability(catalog, "vla_extract_and_sync")
+
+    assert _variant(capability, "go2w_current_topics").status == "available"
 
 
 def test_gridmap_projection_and_validation_variants_are_available():

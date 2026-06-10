@@ -13,9 +13,21 @@ from data_juicer_agents.tools.vla._shared.selection import (
     validate_date,
 )
 
-EXTRACT_SCRIPT = "1_extract_data_from_bag_multi_process_ros2_U_legacy.py"
-SYNC_SCRIPT = "2_sync_data_multi_process_U_legacy.py"
 _STAGE = "extract_and_sync"
+
+
+def _scripts_for_variant(script_variant: str) -> tuple[str, str]:
+    if script_variant == "u_legacy_topics":
+        return (
+            "1_extract_data_from_bag_multi_process_ros2_U_legacy.py",
+            "2_sync_data_multi_process_U_legacy.py",
+        )
+    if script_variant == "go2w_current_topics":
+        return (
+            "1_extract_data_from_bag_multi_process_ros2_U.py",
+            "2_sync_data_multi_process_U.py",
+        )
+    raise ValueError(f"unsupported extract/sync script_variant: {script_variant}")
 
 
 def _runtime(data_python: str, data_env_setup: str | None) -> VLARuntime:
@@ -58,6 +70,7 @@ def build_extract_sync_plan(
     query_dir: str,
     sync_output_dir: str,
     sequence_suffix: str,
+    script_variant: str = "u_legacy_topics",
     gt_dog_root: str | None = None,
     extra_env: dict[str, str] | None = None,
 ) -> dict[str, Any]:
@@ -65,6 +78,7 @@ def build_extract_sync_plan(
     runtime = _runtime(data_python, data_env_setup)
     paths = _paths(raw_root, clip_root, data_toolbox_src, gt_dog_root)
     extra_env_value = {str(key): str(value) for key, value in (extra_env or {}).items()}
+    extract_script, sync_script = _scripts_for_variant(script_variant)
     segments = []
 
     for segment in normalize_selected_segments(selected_segments):
@@ -74,7 +88,7 @@ def build_extract_sync_plan(
         extract_cmd = run_u_python_command(
             runtime,
             paths,
-            EXTRACT_SCRIPT,
+            extract_script,
             [
                 "--data_path",
                 str(raw_segment),
@@ -87,7 +101,7 @@ def build_extract_sync_plan(
         sync_cmd = run_u_python_command(
             runtime,
             paths,
-            SYNC_SCRIPT,
+            sync_script,
             [
                 "--data_path",
                 str(save_path),
@@ -119,6 +133,9 @@ def build_extract_sync_plan(
         "segments": segments,
         "cwd": str(paths.data_toolbox_src),
         "data_toolbox_src": str(paths.data_toolbox_src),
+        "script_variant": script_variant,
+        "extract_script": extract_script,
+        "sync_script": sync_script,
         "raw_root": str(paths.raw_root),
         "clip_root": str(paths.clip_root),
         "gt_dog_root": str(paths.gt_dog_root),
@@ -173,6 +190,7 @@ def _base_payload(
     query_dir: str,
     sync_output_dir: str,
     sequence_suffix: str,
+    script_variant: str,
     gt_dog_root: str | None,
     extra_env: dict[str, str] | None,
     dry_run: bool,
@@ -192,6 +210,7 @@ def _base_payload(
         "query_dir": query_dir,
         "sync_output_dir": sync_output_dir,
         "sequence_suffix": sequence_suffix,
+        "script_variant": script_variant,
         "gt_dog_root": str(paths.gt_dog_root),
         "extra_env": {str(key): str(value) for key, value in (extra_env or {}).items()},
         "dry_run": dry_run,
@@ -237,6 +256,7 @@ def extract_and_sync(**kwargs: Any) -> dict[str, Any]:
         query_dir=kwargs["query_dir"],
         sync_output_dir=kwargs["sync_output_dir"],
         sequence_suffix=kwargs["sequence_suffix"],
+        script_variant=kwargs.get("script_variant", "u_legacy_topics"),
         gt_dog_root=gt_dog_root,
         extra_env=extra_env,
         dry_run=dry_run,
@@ -336,6 +356,9 @@ def extract_and_sync(**kwargs: Any) -> dict[str, Any]:
                         "run_id": run_id,
                         "log_dir": str(Path(log_dir).expanduser()) if log_dir else None,
                         "data_toolbox_src": plan["data_toolbox_src"],
+                        "script_variant": plan["script_variant"],
+                        "extract_script": plan["extract_script"],
+                        "sync_script": plan["sync_script"],
                         "raw_root": plan["raw_root"],
                         "clip_root": plan["clip_root"],
                         "gt_dog_root": plan["gt_dog_root"],
@@ -357,6 +380,9 @@ def extract_and_sync(**kwargs: Any) -> dict[str, Any]:
             "run_id": run_id,
             "log_dir": str(Path(log_dir).expanduser()) if log_dir else None,
             "data_toolbox_src": plan["data_toolbox_src"],
+            "script_variant": plan["script_variant"],
+            "extract_script": plan["extract_script"],
+            "sync_script": plan["sync_script"],
             "raw_root": plan["raw_root"],
             "clip_root": plan["clip_root"],
             "gt_dog_root": plan["gt_dog_root"],

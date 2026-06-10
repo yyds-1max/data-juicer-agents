@@ -41,6 +41,37 @@ def test_build_extract_sync_plan_generates_one_extract_and_sync_command_per_segm
     assert "seg_a_zhigu_wuhan" in commands[1][-1]
 
 
+def test_build_extract_sync_plan_current_variant_uses_current_scripts(tmp_path):
+    raw_root = tmp_path / "raw"
+    clip_root = tmp_path / "clip"
+    toolbox = tmp_path / "toolbox"
+    (raw_root / "20270605_temp" / "seg_a").mkdir(parents=True)
+    toolbox.mkdir()
+
+    result = build_extract_sync_plan(
+        date="20270605",
+        selected_segments=["seg_a"],
+        raw_root=str(raw_root),
+        clip_root=str(clip_root),
+        data_toolbox_src=str(toolbox),
+        data_env_setup="/srv/setup.sh",
+        data_python="/usr/bin/python3.8",
+        processes_num=4,
+        query_dir="rs32_lidar_points",
+        sync_output_dir="sync_data",
+        sequence_suffix="zhigu_wuhan",
+        script_variant="go2w_current_topics",
+    )
+
+    joined = "\n".join(" ".join(cmd) for cmd in result["segments"][0]["commands"])
+    assert result["script_variant"] == "go2w_current_topics"
+    assert result["extract_script"] == "1_extract_data_from_bag_multi_process_ros2_U.py"
+    assert result["sync_script"] == "2_sync_data_multi_process_U.py"
+    assert "1_extract_data_from_bag_multi_process_ros2_U.py" in joined
+    assert "2_sync_data_multi_process_U.py" in joined
+    assert "_legacy.py" not in joined
+
+
 def test_extract_and_sync_dry_run_does_not_create_clip_segment(tmp_path):
     raw_root = tmp_path / "raw"
     clip_root = tmp_path / "clip"

@@ -152,6 +152,7 @@ NAVIGATION_TOOL_CAPABILITIES: list[ToolCapability] = [
                     "raw_root": "dataset.raw_root",
                     "clip_root": "dataset.clip_root",
                     "query_dir": "sync.query_raw_dir",
+                    "script_variant": "stage_variants.extract_and_sync.variant",
                 },
                 expected_artifacts=[
                     {
@@ -174,8 +175,15 @@ NAVIGATION_TOOL_CAPABILITIES: list[ToolCapability] = [
             ),
             _variant(
                 "go2w_current_topics",
-                status="planned",
                 selectors={"topic_schema": ["go2w_current_topics"]},
+                arg_bindings={
+                    "date": "dataset.date",
+                    "selected_segments": "dataset.selected_segments",
+                    "raw_root": "dataset.raw_root",
+                    "clip_root": "dataset.clip_root",
+                    "query_dir": "sync.query_raw_dir",
+                    "script_variant": "stage_variants.extract_and_sync.variant",
+                },
                 stage_config={
                     "topic_schema_support": ["go2w_current_topics"],
                     "supports_custom_topic_mapping": False,
