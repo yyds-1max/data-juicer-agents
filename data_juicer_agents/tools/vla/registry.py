@@ -36,6 +36,9 @@ from data_juicer_agents.tools.vla.inspect_trajectory_script_variants import (
     VLA_INSPECT_TRAJECTORY_SCRIPT_VARIANTS,
 )
 from data_juicer_agents.tools.vla.list_clip_segments import VLA_LIST_CLIP_SEGMENTS
+from data_juicer_agents.tools.vla.list_tool_capability_catalog import (
+    VLA_LIST_TOOL_CAPABILITY_CATALOG,
+)
 from data_juicer_agents.tools.vla.prepare_finish_dataset import (
     VLA_PREPARE_FINISH_DATASET,
 )
@@ -64,6 +67,7 @@ TOOL_SPECS: List[ToolSpec] = [
     VLA_INFER_LOCALIZATION_POLICY,
     VLA_INSPECT_GRIDMAP_ARTIFACTS,
     VLA_INSPECT_TRAJECTORY_SCRIPT_VARIANTS,
+    VLA_LIST_TOOL_CAPABILITY_CATALOG,
     VLA_PREPARE_RAW_TEMP,
     VLA_EXTRACT_AND_SYNC,
     VLA_LIST_CLIP_SEGMENTS,
