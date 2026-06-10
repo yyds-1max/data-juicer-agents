@@ -7,6 +7,14 @@ from pydantic import BaseModel, Field
 from data_juicer_agents.tools.vla._shared.config import VLAPaths, VLARuntime
 
 
+def _default_clip_root() -> str:
+    return str(VLAPaths().clip_root)
+
+
+def _default_finish_root() -> str:
+    return str(VLAPaths().finish_root)
+
+
 def _default_trajectory_root() -> str:
     return str(VLAPaths().trajectory_root)
 
@@ -20,22 +28,21 @@ def _default_data_python() -> str:
     return VLARuntime().data_python
 
 
-class RunProjectionTrajectoryInput(BaseModel):
-    save_path: str
-    save_path_temp: str
+class PrepareGridmapInput(BaseModel):
+    date: str
+    selected_segments: list[str]
+    clip_root: str = Field(default_factory=_default_clip_root)
+    finish_root: str = Field(default_factory=_default_finish_root)
     trajectory_root: str = Field(default_factory=_default_trajectory_root)
+    gridmap_variant: Literal["copy_existing_artifact", "pointcloud_to_gridmap"]
     data_env_setup: str | None = Field(default_factory=_default_data_env_setup)
     data_python: str = Field(default_factory=_default_data_python)
-    use_gridmap: bool = True
-    trajectory_variant: Literal[
-        "cjl_with_gridmap",
-        "cjl_0525_with_gridmap",
-    ] | None = None
+    generator_script: str | None = None
     timeout: int | None = Field(default=None, gt=0)
     dry_run: bool = True
     run_id: str | None = None
     log_dir: str | None = None
 
 
-class RunProjectionTrajectoryOutput(BaseModel):
+class PrepareGridmapOutput(BaseModel):
     ok: bool

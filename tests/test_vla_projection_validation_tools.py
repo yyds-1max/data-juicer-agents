@@ -12,43 +12,43 @@ from data_juicer_agents.tools.vla.validate_outputs.logic import validate_outputs
 from data_juicer_agents.tools.vla.validate_outputs.tool import VLA_VALIDATE_OUTPUTS
 
 
-def test_build_projection_trajectory_plan_without_gridmap_uses_no_gridmap_mover():
+def test_build_projection_trajectory_plan_defaults_to_required_gridmap_move():
     result = build_projection_trajectory_plan(
         save_path="/finish/20270515",
         save_path_temp="/finish/20270515_temp",
         trajectory_root="/traj",
         data_env_setup="/srv/setup.sh",
         data_python="/usr/bin/python3.8",
-        use_gridmap=False,
     )
 
+    names = [step["name"] for step in result["steps"]]
+    assert "copy_gridmap" not in names
     joined = "\n".join(" ".join(item["command"]) for item in result["steps"])
     assert "NuscenesAanlysis_smart_pts_project/main.py" in joined
     assert "2_pt_project/0_img2world.py" in joined
     assert "2_pt_project/4_speed_direction_odom.py" in joined
     assert "2_pt_project/2_othermethod_cjl.py" in joined
-    assert "2_pt_project/3_move_dir_no_gridmap.py" in joined
-    assert "2_pt_project/3_move_dir.py" not in joined
+    assert "2_pt_project/3_move_dir.py" in joined
+    assert "2_pt_project/3_move_dir_no_gridmap.py" not in joined
     assert "cp_gridmap.py" not in joined
 
 
-def test_build_projection_trajectory_plan_with_gridmap_uses_gridmap_steps():
+def test_build_projection_trajectory_plan_0525_with_gridmap_uses_0525_script():
     result = build_projection_trajectory_plan(
-        save_path="/finish/20270515",
-        save_path_temp="/finish/20270515_temp",
+        save_path="/finish/20270605",
+        save_path_temp="/finish/20270605_temp",
         trajectory_root="/traj",
         data_env_setup="/srv/setup.sh",
         data_python="/usr/bin/python3.8",
-        use_gridmap=True,
+        trajectory_variant="cjl_0525_with_gridmap",
     )
 
     names = [step["name"] for step in result["steps"]]
-    assert names.index("copy_gridmap") < names.index("generate_trajectory")
+    assert "copy_gridmap" not in names
     joined = "\n".join(" ".join(item["command"]) for item in result["steps"])
-    assert "other_code/cp_gridmap.py" in joined
+    assert "2_pt_project/2_othermethod_cjl_0525.py" in joined
     assert "2_pt_project/3_move_dir.py" in joined
     assert "2_pt_project/3_move_dir_no_gridmap.py" not in joined
-    assert "--root_data /finish/20270515_temp" in joined
 
 
 def test_validate_outputs_full_reports_missing_and_present(tmp_path):
@@ -111,6 +111,8 @@ def test_validate_outputs_full_passes_with_expected_outputs(tmp_path):
     (final_clip / "clip_a_trajectory.json").write_text("[]\n", encoding="utf-8")
     (final_clip / "clip_a_speed_direction.json").write_text("{}\n", encoding="utf-8")
     (final_clip / "master_black_black_world.txt").write_text("1 2 3\n", encoding="utf-8")
+    (final_clip / "grid_map").mkdir()
+    (final_clip / "grid_map" / "123.json").write_text("{}\n", encoding="utf-8")
 
     result = validate_outputs(
         date="20270515",
@@ -125,6 +127,9 @@ def test_validate_outputs_full_passes_with_expected_outputs(tmp_path):
     assert result["checks"]["tracking_outputs"]["count"] == 1
     assert result["checks"]["final_outputs"]["ok"] is True
     assert result["checks"]["final_outputs"]["clips"]["clip_a"]["ok"] is True
+    assert result["checks"]["final_outputs"]["clips"]["clip_a"]["grid_map"] == str(
+        final_clip / "grid_map"
+    )
     assert result["checks"]["final_outputs"]["clips"]["clip_a"]["path"] == str(
         final_clip
     )
@@ -158,6 +163,7 @@ def test_validate_outputs_full_rejects_empty_final_dir(tmp_path):
         "trajectory_json",
         "speed_direction_json",
         "world_result_txt",
+        "grid_map",
     ]
 
 
@@ -184,6 +190,7 @@ def test_validate_outputs_reports_each_missing_final_clip_output(tmp_path):
         "trajectory_json",
         "speed_direction_json",
         "world_result_txt",
+        "grid_map",
     ]
 
     (final_clip / "rout_plot_v2").mkdir()
@@ -198,6 +205,7 @@ def test_validate_outputs_reports_each_missing_final_clip_output(tmp_path):
         "trajectory_json",
         "speed_direction_json",
         "world_result_txt",
+        "grid_map",
     ]
 
     (final_clip / "clip_a_trajectory.json").write_text("[]\n", encoding="utf-8")
@@ -211,6 +219,7 @@ def test_validate_outputs_reports_each_missing_final_clip_output(tmp_path):
     assert result["checks"]["final_outputs"]["clips"]["clip_a"]["missing"] == [
         "speed_direction_json",
         "world_result_txt",
+        "grid_map",
     ]
 
     (final_clip / "clip_a_speed_direction.json").write_text("{}\n", encoding="utf-8")
@@ -222,7 +231,8 @@ def test_validate_outputs_reports_each_missing_final_clip_output(tmp_path):
         level="full",
     )
     assert result["checks"]["final_outputs"]["clips"]["clip_a"]["missing"] == [
-        "world_result_txt"
+        "world_result_txt",
+        "grid_map",
     ]
 
     (final_clip / "img_master_black_black.txt").write_text("image points\n", encoding="utf-8")
@@ -234,10 +244,24 @@ def test_validate_outputs_reports_each_missing_final_clip_output(tmp_path):
         level="full",
     )
     assert result["checks"]["final_outputs"]["clips"]["clip_a"]["missing"] == [
-        "world_result_txt"
+        "world_result_txt",
+        "grid_map",
     ]
 
     (final_clip / "other_red_world.txt").write_text("1 2 3\n", encoding="utf-8")
+    result = validate_outputs(
+        date="20270515",
+        clip_root=str(clip_root),
+        finish_root=str(finish_root),
+        selected_segments=["seg_a"],
+        level="full",
+    )
+    assert result["checks"]["final_outputs"]["clips"]["clip_a"]["missing"] == [
+        "grid_map"
+    ]
+    assert result["ok"] is False
+
+    (final_clip / "grid_map").mkdir()
     result = validate_outputs(
         date="20270515",
         clip_root=str(clip_root),
@@ -277,13 +301,14 @@ def test_run_projection_and_trajectory_execute_returns_actual_output_paths(
     save_path_temp = tmp_path / "finish" / "20270515_temp"
     temp_clip = save_path_temp / "samples" / "20270515" / "clip_a"
     temp_clip.mkdir(parents=True)
+    (temp_clip / "grid_map").mkdir()
     trajectory_root = tmp_path / "traj"
     for script in [
         trajectory_root / "NuscenesAanlysis_smart_pts_project" / "main.py",
         trajectory_root / "2_pt_project" / "0_img2world.py",
         trajectory_root / "2_pt_project" / "4_speed_direction_odom.py",
         trajectory_root / "2_pt_project" / "2_othermethod_cjl.py",
-        trajectory_root / "2_pt_project" / "3_move_dir_no_gridmap.py",
+        trajectory_root / "2_pt_project" / "3_move_dir.py",
     ]:
         script.parent.mkdir(parents=True, exist_ok=True)
         script.write_text("# legacy script placeholder\n", encoding="utf-8")
@@ -295,6 +320,8 @@ def test_run_projection_and_trajectory_execute_returns_actual_output_paths(
         (temp_clip / "clip_a_speed_direction.json").write_text("temp\n", encoding="utf-8")
         final_clip = save_path / "seg_a" / "clip_a"
         (final_clip / "rout_plot_v2").mkdir(parents=True, exist_ok=True)
+        (final_clip / "grid_map").mkdir(parents=True, exist_ok=True)
+        (final_clip / "grid_map" / "123.json").write_text("{}\n", encoding="utf-8")
         (final_clip / "clip_a_trajectory.json").write_text("[]\n", encoding="utf-8")
         (final_clip / "clip_a_speed_direction.json").write_text("{}\n", encoding="utf-8")
         (final_clip / "master_black_world.txt").write_text("1 2 3\n", encoding="utf-8")
@@ -348,13 +375,14 @@ def test_run_projection_and_trajectory_timeout_writes_stage_end(tmp_path, monkey
     save_path = tmp_path / "finish" / "20270515"
     save_path_temp = tmp_path / "finish" / "20270515_temp"
     (save_path_temp / "samples" / "20270515" / "clip_a").mkdir(parents=True)
+    (save_path_temp / "samples" / "20270515" / "clip_a" / "grid_map").mkdir()
     trajectory_root = tmp_path / "traj"
     for script in [
         trajectory_root / "NuscenesAanlysis_smart_pts_project" / "main.py",
         trajectory_root / "2_pt_project" / "0_img2world.py",
         trajectory_root / "2_pt_project" / "4_speed_direction_odom.py",
         trajectory_root / "2_pt_project" / "2_othermethod_cjl.py",
-        trajectory_root / "2_pt_project" / "3_move_dir_no_gridmap.py",
+        trajectory_root / "2_pt_project" / "3_move_dir.py",
     ]:
         script.parent.mkdir(parents=True, exist_ok=True)
         script.write_text("# legacy script placeholder\n", encoding="utf-8")

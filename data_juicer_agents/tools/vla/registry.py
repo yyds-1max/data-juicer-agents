@@ -13,6 +13,7 @@ from data_juicer_agents.tools.vla.list_clip_segments import VLA_LIST_CLIP_SEGMEN
 from data_juicer_agents.tools.vla.prepare_finish_dataset import (
     VLA_PREPARE_FINISH_DATASET,
 )
+from data_juicer_agents.tools.vla.prepare_gridmap import VLA_PREPARE_GRIDMAP
 from data_juicer_agents.tools.vla.prepare_raw_temp import VLA_PREPARE_RAW_TEMP
 from data_juicer_agents.tools.vla.run_manual_box_annotation import (
     VLA_RUN_MANUAL_BOX_ANNOTATION,
@@ -34,6 +35,7 @@ TOOL_SPECS: List[ToolSpec] = [
     VLA_BUILD_NOOBSCENES_INPUTS,
     VLA_RUN_MANUAL_BOX_ANNOTATION,
     VLA_RUN_TRACKING,
+    VLA_PREPARE_GRIDMAP,
     VLA_RUN_PROJECTION_AND_TRAJECTORY,
     VLA_VALIDATE_OUTPUTS,
 ]

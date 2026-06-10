@@ -53,8 +53,9 @@ ReAct 再根据结果继续推进、询问用户或总结处理结果。
 体处理机械臂数据。不同场景的数据结构、处理步骤、标注方式、质检方式和输出
 格式都可能不同。
 
-第二，同一场景下的数据形态也会变化。以当前导航数据为例，有的数据不包含
-gridmap，因此最后转移最终文件时不应该要求转移 gridmap；有的数据 topic 名称
+第二，同一场景下的数据形态也会变化。以当前导航数据为例，有的数据 raw
+topic 不包含 gridmap，但最终产物仍要求 `grid_map`；这类数据需要先从点云生成
+或从 clip/sync artifact 准备 `grid_map`，再执行最后移动。有的数据 topic 名称
 可能变化，这时就需要使用支持不同或自定义 topic 的处理代码或工具变体。
 
 第三，相同步骤也可能对应不同工具。比如同样是“同步/拆分”步骤，默认 topic
@@ -358,7 +359,9 @@ inputs:
 
 data_profile:
   source_type: ros2_db3
-  has_gridmap: false
+  raw_gridmap_topic_present: false
+  expect_gridmap_output: true
+  gridmap_source: generated_from_pointcloud
   topic_schema: default
   topics: []
   missing_required_inputs: []
@@ -380,7 +383,7 @@ stages:
     name: "执行点投影与轨迹生成"
     tool: vla_run_projection_and_trajectory
     args:
-      use_gridmap: false
+      use_gridmap: true
     required: true
     effects: execute
     status: pending
@@ -435,11 +438,11 @@ vla_validate_outputs
 已知导航变体：
 
 ```text
-如果数据包含 gridmap 或用户要求处理 gridmap：
-  projection/trajectory stage 设置 use_gridmap=true。
-
-如果数据不包含 gridmap：
-  设置 use_gridmap=false，最终输出校验也不要求 gridmap。
+导航最终输出默认要求 grid_map：
+  raw 有 gridmap topic 时，拆包/同步后准备 grid_map。
+  clip/sync 已有 grid_map artifact 时，复制到 projection 输入位置。
+  raw 没有 gridmap topic 且 clip/sync 没有 grid_map 时，从点云生成 grid_map。
+  以上来源都不可用时，计划进入阻塞状态，不能跳过最终 grid_map 移动。
 
 如果 topic 名称符合默认 schema：
   使用默认 extract/sync 工具。

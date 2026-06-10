@@ -91,7 +91,10 @@ def _is_world_result_txt(path: Path) -> bool:
 
 
 def _final_outputs_check(
-    *, final_date_dir: Path, samples_date_dir: Path
+    *,
+    final_date_dir: Path,
+    samples_date_dir: Path,
+    expect_gridmap_output: bool | None,
 ) -> dict[str, Any]:
     expected_clip_names = [clip_dir.name for clip_dir in _sample_clip_dirs(samples_date_dir)]
     if not expected_clip_names and final_date_dir.is_dir():
@@ -99,15 +102,7 @@ def _final_outputs_check(
             [item.name for item in final_date_dir.iterdir() if item.is_dir()]
         )
 
-    gridmap_required = False
-    if samples_date_dir.is_dir():
-        gridmap_required = any(
-            path.is_dir() for path in samples_date_dir.glob("*/grid_map")
-        )
-    if final_date_dir.is_dir():
-        gridmap_required = gridmap_required or any(
-            path.is_dir() for path in final_date_dir.glob("*/grid_map")
-        )
+    gridmap_required = True if expect_gridmap_output is None else expect_gridmap_output
 
     clips: dict[str, Any] = {}
     missing_clips = []
@@ -174,6 +169,7 @@ def _final_outputs_check(
         "expected_clips": expected_clip_names,
         "missing_clips": missing_clips,
         "gridmap_required": gridmap_required,
+        "expect_gridmap_output": expect_gridmap_output,
         "clips": clips,
         "count": len([item for item in clips.values() if item["ok"]]),
     }
@@ -219,6 +215,7 @@ def validate_outputs(
     finish_root: str,
     selected_segments: list[str],
     level: ValidationLevel = "full",
+    expect_gridmap_output: bool | None = None,
     run_id: str | None = None,
     log_dir: str | None = None,
 ) -> dict[str, Any]:
@@ -236,6 +233,7 @@ def validate_outputs(
         "finish_root": str(finish_root_path),
         "selected_segments": selected,
         "level": level,
+        "expect_gridmap_output": expect_gridmap_output,
         "run_id": run_id,
         "log_dir": str(Path(log_dir).expanduser()) if log_dir else None,
     }
@@ -260,6 +258,7 @@ def validate_outputs(
         "final_outputs": _final_outputs_check(
             final_date_dir=finish_final,
             samples_date_dir=samples_date_dir,
+            expect_gridmap_output=expect_gridmap_output,
         ),
     }
     required = _required_checks(level)

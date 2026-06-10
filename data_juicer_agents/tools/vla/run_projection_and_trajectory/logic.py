@@ -51,6 +51,7 @@ def _planned_outputs(save_path: Path, save_path_temp: Path) -> dict[str, list[st
         "moved_final_result_paths": [
             str(save_path / "*" / "*"),
             str(save_path / "*" / "*" / "rout_plot_v2"),
+            str(save_path / "*" / "*" / "grid_map"),
             str(save_path / "*" / "*" / "*.txt"),
             str(save_path / "*" / "*" / "*.json"),
         ],
@@ -117,6 +118,9 @@ def _scan_output_paths(save_path: str, save_path_temp: str) -> dict[str, list[st
         moved_paths.extend(
             path for path in final_path.glob("*/*/rout_plot_v2") if path.is_dir()
         )
+        moved_paths.extend(
+            path for path in final_path.glob("*/*/grid_map") if path.is_dir()
+        )
 
     return {
         "generated_projection_files": _sorted_existing(projection_files),
@@ -129,6 +133,18 @@ def _scan_output_paths(save_path: str, save_path_temp: str) -> dict[str, list[st
     }
 
 
+def _resolve_trajectory_variant(trajectory_variant: str | None) -> str:
+    return trajectory_variant or "cjl_with_gridmap"
+
+
+def _trajectory_script_for_variant(variant: str) -> str:
+    if variant == "cjl_with_gridmap":
+        return "2_othermethod_cjl.py"
+    if variant == "cjl_0525_with_gridmap":
+        return "2_othermethod_cjl_0525.py"
+    raise ValueError(f"unsupported trajectory_variant: {variant}")
+
+
 def build_projection_trajectory_plan(
     *,
     save_path: str,
@@ -136,7 +152,8 @@ def build_projection_trajectory_plan(
     trajectory_root: str,
     data_env_setup: str | None,
     data_python: str = "python3",
-    use_gridmap: bool = False,
+    use_gridmap: bool = True,
+    trajectory_variant: str | None = None,
 ) -> dict[str, Any]:
     save_path_value = str(Path(save_path).expanduser())
     temp_path = Path(save_path_temp).expanduser()
@@ -144,11 +161,9 @@ def build_projection_trajectory_plan(
     runtime = _runtime(data_python, data_env_setup)
     project_root = trajectory_path / "NuscenesAanlysis_smart_pts_project"
     pt_project_root = trajectory_path / "2_pt_project"
-    move_results_script = (
-        pt_project_root / "3_move_dir.py"
-        if use_gridmap
-        else pt_project_root / "3_move_dir_no_gridmap.py"
-    )
+    resolved_variant = _resolve_trajectory_variant(trajectory_variant)
+    trajectory_script = _trajectory_script_for_variant(resolved_variant)
+    move_results_script = pt_project_root / "3_move_dir.py"
 
     specs: list[tuple[str, Path, Path, list[str]]] = [
         (
@@ -172,7 +187,7 @@ def build_projection_trajectory_plan(
         (
             "generate_trajectory",
             pt_project_root,
-            pt_project_root / "2_othermethod_cjl.py",
+            pt_project_root / trajectory_script,
             [str(temp_path)],
         ),
         (
@@ -182,16 +197,6 @@ def build_projection_trajectory_plan(
             ["--root_path", save_path_value, "--temp_path", str(temp_path)],
         ),
     ]
-    if use_gridmap:
-        specs.insert(
-            3,
-            (
-                "copy_gridmap",
-                trajectory_path / "other_code",
-                trajectory_path / "other_code" / "cp_gridmap.py",
-                ["--root_data", str(temp_path)],
-            ),
-        )
 
     steps = [
         _step(name, cwd, script, python_data_command(runtime, script, args))
@@ -204,7 +209,9 @@ def build_projection_trajectory_plan(
         "trajectory_root": str(trajectory_path),
         "data_env_setup": data_env_setup,
         "data_python": data_python,
-        "use_gridmap": bool(use_gridmap),
+        "use_gridmap": True,
+        "requested_use_gridmap": bool(use_gridmap),
+        "trajectory_variant": resolved_variant,
         "steps": steps,
         "commands": [step["command"] for step in steps],
         "planned_outputs": _planned_outputs(Path(save_path_value), temp_path),
@@ -229,6 +236,21 @@ def _missing_required_paths(plan: dict[str, Any]) -> list[dict[str, str]]:
         exists = path.is_dir() if item["type"] == "cwd" else path.is_file()
         if not exists:
             missing.append(item)
+    return missing
+
+
+def _missing_prepared_gridmaps(save_path_temp: str) -> list[dict[str, str]]:
+    samples_root = Path(save_path_temp) / "samples"
+    missing = []
+    if not samples_root.is_dir():
+        return missing
+    for clip_dir in sorted(
+        [path for path in samples_root.glob("*/*") if path.is_dir()],
+        key=lambda path: str(path),
+    ):
+        grid_map = clip_dir / "grid_map"
+        if not grid_map.is_dir():
+            missing.append({"clip": clip_dir.name, "path": str(grid_map)})
     return missing
 
 
@@ -315,7 +337,8 @@ def run_projection_and_trajectory(
     trajectory_root: str,
     data_env_setup: str | None,
     data_python: str = "python3",
-    use_gridmap: bool = False,
+    use_gridmap: bool = True,
+    trajectory_variant: str | None = None,
     timeout: int | None = None,
     dry_run: bool = True,
     run_id: str | None = None,
@@ -328,6 +351,7 @@ def run_projection_and_trajectory(
         data_env_setup=data_env_setup,
         data_python=data_python,
         use_gridmap=use_gridmap,
+        trajectory_variant=trajectory_variant,
     )
     plan.update(
         {
@@ -372,6 +396,22 @@ def run_projection_and_trajectory(
                 "missing": missing,
             },
             "VLA projection legacy cwd or script paths are missing",
+        )
+
+    missing_gridmaps = _missing_prepared_gridmaps(plan["save_path_temp"])
+    if missing_gridmaps:
+        return _finish(
+            logger,
+            {
+                **plan,
+                "ok": False,
+                "error_type": "missing_prepared_gridmap",
+                "missing_gridmaps": missing_gridmaps,
+                "next_actions": [
+                    "run vla_prepare_gridmap before vla_run_projection_and_trajectory"
+                ],
+            },
+            "VLA projection input is missing prepared grid_map directories",
         )
 
     command_results = []

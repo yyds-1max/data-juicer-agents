@@ -21,6 +21,7 @@ class ValidateOutputsInput(BaseModel):
     finish_root: str = Field(default_factory=_default_finish_root)
     selected_segments: list[str]
     level: Literal["clip", "finish", "full"] = "full"
+    expect_gridmap_output: bool | None = None
     run_id: str | None = None
     log_dir: str | None = None
 
