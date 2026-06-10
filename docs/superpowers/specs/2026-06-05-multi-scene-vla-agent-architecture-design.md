@@ -2,6 +2,11 @@
 
 日期：2026-06-05
 
+> 本文是多场景 VLA Agent 的高层历史设计，用于说明架构方向与职责拆分。
+> 具体可执行契约、工具变体枚举、`VLAWorkflowPlan` 字段和导航 workflow skeleton
+> 以后续的 `2026-06-08-vla-plan-agent-executor-agent-architecture-spec.md` 与
+> `2026-06-09-vla-multi-scene-workflow-implementation-plan.md` 为准。
+
 ## 背景
 
 当前系统已经实现了导航跟随场景的 VLA 数据处理流程。这个流程目前由单个
@@ -362,28 +367,35 @@ data_profile:
   raw_gridmap_topic_present: false
   expect_gridmap_output: true
   gridmap_source: generated_from_pointcloud
-  topic_schema: default
+  topic_schema: u_legacy_topics
   topics: []
   missing_required_inputs: []
   recommended_variants:
-    extract_and_sync: vla_extract_and_sync
-    projection_trajectory: vla_run_projection_and_trajectory
+    extract_and_sync: u_legacy_topics
+    gridmap_processing: pointcloud_to_gridmap
+    projection_and_trajectory: cjl_with_gridmap
 
 stages:
   - id: inspect_raw_date
     name: "检查导航原始数据"
     tool: vla_inspect_raw_date
-    args:
-      date: "20270515"
+    variant: default
     required: true
     effects: read
     status: pending
 
-  - id: projection_trajectory
+  - id: gridmap_processing
+    name: "准备 grid_map"
+    tool: vla_prepare_gridmap
+    variant: pointcloud_to_gridmap
+    required: true
+    effects: execute
+    status: pending
+
+  - id: projection_and_trajectory
     name: "执行点投影与轨迹生成"
     tool: vla_run_projection_and_trajectory
-    args:
-      use_gridmap: true
+    variant: cjl_with_gridmap
     required: true
     effects: execute
     status: pending
@@ -431,6 +443,7 @@ vla_prepare_finish_dataset
 vla_build_noobscenes_inputs
 vla_run_manual_box_annotation
 vla_run_tracking
+vla_prepare_gridmap
 vla_run_projection_and_trajectory
 vla_validate_outputs
 ```

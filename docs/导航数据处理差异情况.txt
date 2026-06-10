@@ -1,0 +1,60 @@
+解析工具：
+/media/heying/hy_data2/GT_dog/modules_ros2/DataToolbox/src/1_extract_data_from_bag_multi_process_ros2_U.py：
+前视鱼眼相话题：
+	山猫：/cam_video5/csi_cam/image_raw/compressed
+	小U：/cam_video5/csi_cam/image_raw/compressed
+	go2w：/cam_video4/csi_cam/image_raw/compressed
+雷达话题：
+	/lidar_points
+	/rs32_lidar_points
+	/r32_rslidar_points
+	…
+odom：
+	小U：/utlidar/robot_odom_systime
+	go2w：/sport_odom
+
+Ins：
+	山猫：/drivers/ins/Ins
+
+	以上话题不同平台，同一个传感器可能会录制不同的话题名，但一般情况数据格式是一样，比如 cam_video4和 cam_video5,话题名不同但都是相同的前视鱼眼相机，比如上述三个激光雷达话题名，也是相同的雷达数据，只是在不同平台录制数据的时候，设定的话题名不一样。
+	还有的话题比如，在山猫平台上录制的Ins，而在其他的平台上录制的则是odom（都是定位相关的话题，可能不同平台安装的传感器不同，所以会录制不同的数据）
+
+
+/media/heying/hy_data2/GT_dog/modules_ros2/DataToolbox/src/2_sync_data_multi_process_U.py：
+	 "cam_video4": "fisheye_front",或 "cam_video5": "fisheye_front",
+	"sport_odom":"odom" 或"utlidar":"odom" 
+	"lidar_points":"r32_rslidar_points" 或不需要映射
+这个也是和上面同样的情况，将话题名转换为数据文件夹名，不同平台录制数据的话题名不同会导致这个映射需要修改
+
+
+/media/heying/hy_data2/GT_dog/modules_ros2/run_U.sh：
+sync_query_dir="r32_rslidar_points"  这个是以什么传感器作为基准做时间同步，一般情况下是雷达或gridmap（此前山猫平台有gridmap话题，后续小U和go2w没有该话题所以以雷达为基准做时间同步）
+
+
+
+
+
+标注工具：
+/media/heying/hy_data1/Trajectory_visualization/Object_location_gh_v3_fisheye_five_U_add_SF/run_odom.sh：
+
+/media/heying/hy_data1/Trajectory_visualization/Object_location_gh_v3_fisheye_five_U_add_SF/NoobScenes/params/20260529_go2w/sensors 
+每次更换平台或重新标定相机（相机位置如果有移动，需要重新标定相机外参），需要修改这里的相机参数
+
+如果使用Ins话题（比如此前的山猫平台），则这两个脚本不用运行：
+python3 /media/heying/hy_data1/Trajectory_visualization/Object_location_gh_v3_fisheye_five_U_add_SF/NoobScenes/include/1_odom_convert.py --temp_path $SAVE_PATH_TEMP
+ python3 /media/heying/hy_data1/Trajectory_visualization/Object_location_gh_v3_fisheye_five_U_add_SF/NoobScenes/include/2_resize.py --temp_path $SAVE_PATH_TEMP
+因为工具中后续脚本，读取的是Ins的数据，而更换小U和go2w后，没有Ins，则将odom转换为Ins格式，后续涉及到Ins的脚本则不用修改了
+
+
+# if [ "$outdoor" = false ]; then#     echo "🟢 outdoor=false，正在运行 Python 脚本..."#     python3 /media/heying/hy_data1/Trajectory_visualization/Object_location_gh_v3_fisheye_five_U_add_SF/other_code/cp_ins.py  $SAVE_PATH_TEMP# else#     echo "🔵 outdoor=true，跳过执行。"# fi
+
+这里如果是山猫平台，则打开（关于Ins的），如果不是就这样注释掉即可，不使用
+山猫平台使用这个的原因是，在室外采集的数据，可以直接录制Ins，而在室内采集的数据，则需要建图得到Ins（应该是室内无法获取GPS的准确定位，所以不能得到Ins信息，需要使用雷达点云建图获取）
+
+python3 /media/heying/hy_data1/Trajectory_visualization/Object_location_gh_v3_fisheye_five_U_add_SF/other_code/cp_gridmap.py --root_data $SAVE_PATH_TEMP 
+这个脚本是复制并处理gridmap，正常的处理流程是，
+山猫：                数据解析（拆包，时间同步等操作，有gridmap话题）——数据标注
+小U和go2w：数据解析（没有现成的gridmap话题）——利用点云创建gridmap——数据标注
+所以对于小U和go2w的平台，后续开发agent工具，需要预留一个创建gridmap工具的接口（已有工具，后续整合到现在的agent中即可，这个的工具是程光涛写的）
+
+

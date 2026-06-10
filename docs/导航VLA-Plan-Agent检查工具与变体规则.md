@@ -141,7 +141,7 @@ gridmap.gridmap_source = existing_gridmap_artifact 或 generated_from_pointcloud
 - 当前服务器 `run_odom.sh` 执行 `cp_gridmap.py`。
 - 当前服务器 `run_odom.sh` 使用 `2_othermethod_cjl_0525.py`。
 - 当前服务器 `run_odom.sh` 使用 `3_move_dir.py`，该脚本要求最终复制 `grid_map`。
-- `cp_gridmap.py` 从 `/media/heying/hy_data1/VLADatasets/clip_data/<date>/<segment>/sync_data/<clip>/grid_map` 查找已有 grid_map，再复制到 finish temp。它不是从 raw db3 直接生成 gridmap。
+- `cp_gridmap.py` 从 `/media/heying/hy_data1/VLADatasets/clip_data/<date>/<segment>/sync_data/<clip>/grid_map` 查找已有 grid_map，对 JSON 执行坐标转换后写入 finish temp。它不是从 raw db3 直接生成 gridmap，也不是原样 copytree。
 
 推荐画像标签：
 
@@ -204,7 +204,7 @@ Plan-Agent 必须把 gridmap 分成三个问题检查：
 | gridmap_source | 条件 | 处理策略 |
 | --- | --- | --- |
 | `raw_topic` | raw topic 有 gridmap，且拆包/同步工具支持 | 拆包并同步 gridmap，后续 `use_gridmap=true` |
-| `existing_gridmap_artifact` | clip/sync 下已有 `grid_map` | 执行 `cp_gridmap.py`，后续 `use_gridmap=true` |
+| `existing_gridmap_artifact` | clip/sync 下已有 `grid_map` | 执行 `cp_gridmap.py` 语义的复制加坐标转换，后续 `use_gridmap=true` |
 | `generated_from_pointcloud` | 有可用点云生成 gridmap 工具 | 先执行 gridmap 生成，再 `use_gridmap=true` |
 | `unknown` | 最终脚本要求 grid_map，但无来源 | 阻塞 |
 
@@ -328,7 +328,7 @@ Plan-Agent 应检查：
 - 缺少前视鱼眼图像；
 - 缺少雷达点云；
 - odom 与 Ins 都缺失；
-- topic 可归为 custom 但没有可用 mapping 配置。
+- topic 可归为 `custom_topics` 但没有可用 mapping 配置。
 
 ### 5.4 `vla_infer_sync_policy`
 
@@ -505,22 +505,18 @@ Plan-Agent 应检查：
 - `clip_data/<date>/<segment>/sync_data/<clip>/grid_map` 是否存在；
 - `finish_data/<date>_temp/samples/<date>/<clip>/grid_map` 是否存在；
 - `finish_data/<date>/<segment>/<clip>/grid_map` 是否存在；
-- 可用 gridmap 生成工具是否存在；
-- 推荐 `gridmap_source`。
+- `projection_input_gridmap_ready` 是否为 true；
+- 根据文件事实返回 `gridmap_source`，只能是 `raw_topic`、`existing_gridmap_artifact` 或 `unknown`。
+
+本工具不查询 Tool capability catalog，不判断 `pointcloud_to_gridmap` 是否可用，也不写 stage variant。Plan-Agent 后续结合 capability catalog 决定是否选择 `copy_existing_artifact`、`pointcloud_to_gridmap`，或写入阻塞问题。
 
 填充画像字段：
 
 - `gridmap.raw_gridmap_topic_present`
+- `gridmap.available_gridmap_artifacts`
+- `gridmap.projection_input_gridmap_ready`
 - `gridmap.gridmap_source`
-- `gridmap.requires_gridmap_processing`
-- `gridmap.expect_gridmap_output`
-- `stage_variants.gridmap_processing`
-- `stage_variants.projection_and_trajectory`
-- `stage_variants.validate_outputs`
-
-阻塞条件：
-
-- projection/move/validate 变体要求 grid_map，但 raw、clip artifact 和生成工具都不可用。
+- `evidence`
 
 ### 5.10 `vla_inspect_trajectory_script_variants`
 
@@ -676,7 +672,7 @@ other_code/cp_gridmap.py
 
 | 条件 | 推荐变体 |
 | --- | --- |
-| clip/sync 已有 grid_map | `cp_gridmap_existing` |
+| clip/sync 已有 grid_map | `cp_gridmap_existing`，必须复制并执行 cp_gridmap 坐标转换 |
 | raw 有 gridmap topic 且拆包同步支持 | `raw_gridmap_topic` |
 | 有点云生成 gridmap 工具 | `pointcloud_to_gridmap` |
 | 要求 grid_map 但无来源 | 阻塞 |
@@ -728,7 +724,7 @@ Plan-Agent 应按以下顺序执行规划检查：
 7. 调用 `vla_inspect_processing_state`，判断是否已有中间产物以及是否可跳过 stage。
 8. 调用 `vla_inspect_calibration_assets`，选择或请求确认 sensors 目录。
 9. 调用 `vla_infer_localization_policy`，确定 odom/Ins/indoor cp_ins 策略。
-10. 调用 `vla_inspect_gridmap_artifacts`，确定 gridmap_source 和 expect_gridmap_output。
+10. 调用 `vla_inspect_gridmap_artifacts`，返回 gridmap 文件事实和基于事实的 gridmap_source。
 11. 调用 `vla_inspect_trajectory_script_variants`，确认 projection/move/gridmap 脚本变体。
 12. 调用 `vla_list_tool_capability_catalog`，确认推荐变体真实可用。
 13. 填写 `NavigationVLADataProfile`。
@@ -744,7 +740,7 @@ Plan-Agent 应按以下顺序执行规划检查：
 - segment 缺少 db3 或 metadata；
 - 无法解析 topic；
 - 缺少前视鱼眼图像、雷达点云、定位来源；
-- topic schema 为 custom 但没有 mapping；
+- topic schema 为 `custom_topics` 但没有 mapping；
 - 推荐的拆包/同步变体在 Tool capability catalog 中不存在；
 - 标定参数目录缺失或冲突；
 - localization 需要的变体不存在；
@@ -766,13 +762,13 @@ Plan-Agent 应按以下顺序执行规划检查：
 
 以下内容用于提醒 Plan-Agent 生成计划时要查询 Tool capability catalog，不得仅凭脚本文件存在就认为可执行：
 
-- 已注册 VLA 工具包括 `vla_check_runtime`、`vla_inspect_raw_date`、`vla_prepare_raw_temp`、`vla_extract_and_sync`、`vla_list_clip_segments`、`vla_prepare_finish_dataset`、`vla_build_noobscenes_inputs`、`vla_run_manual_box_annotation`、`vla_run_tracking`、`vla_run_projection_and_trajectory`、`vla_validate_outputs`。
+- 已注册 VLA 工具包括 `vla_check_runtime`、`vla_inspect_raw_date`、`vla_prepare_raw_temp`、`vla_extract_and_sync`、`vla_list_clip_segments`、`vla_prepare_finish_dataset`、`vla_build_noobscenes_inputs`、`vla_run_manual_box_annotation`、`vla_run_tracking`、`vla_prepare_gridmap`、`vla_run_projection_and_trajectory`、`vla_validate_outputs`。
 - `vla_inspect_raw_date` 当前只检查 segment、metadata、db3，不解析 topic。
-- `vla_extract_and_sync` 当前代码固定调用 legacy DataToolbox 脚本；go2w/current/custom topic 需要新增或暴露工具变体。
+- `vla_extract_and_sync` 当前代码固定调用 legacy DataToolbox 脚本；go2w/current/自定义 topic 需要新增或暴露工具变体。
 - `vla_build_noobscenes_inputs` 当前固定执行 odom_convert 和 resize；Ins/native/indoor cp_ins 需要新增或暴露工具变体。
 - `vla_run_projection_and_trajectory` 当前支持 `use_gridmap`，会切换 move 脚本；但轨迹生成脚本当前固定为 `2_othermethod_cjl.py`。
 - 当前服务器业务流使用的 `2_othermethod_cjl_0525.py` 需要作为显式 ToolSpec variant 才能进入可执行 plan。
-- 点云生成 gridmap 的工具本地未看到；如果服务器已有，需要复制对应路径和依赖说明后再纳入 Tool capability catalog。
+- `vla_prepare_gridmap/pointcloud_to_gridmap` 已作为可执行变体接入，默认脚本入口是 `<trajectory_root>/other_code/pcd_to_grid.py`；`pointcloud_to_gridmap` 是工具变体名，不是脚本文件名。
 
 ## 10. 对两个历史样本的推荐决策示例
 
@@ -829,7 +825,7 @@ Plan-Agent 应按以下顺序执行规划检查：
 
 当前本地材料还不足以把以下能力写成可执行 available 变体：
 
-- 从点云生成 gridmap 的工具代码、入口命令、依赖环境和输入输出约定；
+- 服务器上 `pcd_to_grid.py` 的依赖环境、输入输出约定和最小成功样本产物结构；
 - 当前服务器是否已有支持 `go2w_current_topics` 的 agent ToolSpec 版本；
 - `2_othermethod_cjl_0525.py` 相比 `2_othermethod_cjl.py` 的业务差异说明；
 - 如果山猫/Ins 数据仍需支持，需要补充一份包含 `/drivers/ins/Ins` 的 raw metadata 样本和对应 run_Ins/run_odom 差异。

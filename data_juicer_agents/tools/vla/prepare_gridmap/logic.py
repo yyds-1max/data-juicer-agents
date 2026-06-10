@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 from pathlib import Path
@@ -16,6 +17,8 @@ from data_juicer_agents.tools.vla._shared.selection import (
 
 _STAGE = "prepare_gridmap"
 _CLIP_PREFIXES = ("2025", "2026", "2027")
+_GRID_SIZE = 200
+_GRID_TRANSFORM = "cp_gridmap_coordinate_transform"
 
 
 def _runtime(data_python: str, data_env_setup: str | None) -> VLARuntime:
@@ -35,10 +38,47 @@ def _default_generator_script(trajectory_root: Path) -> Path:
     return trajectory_root / "other_code" / "pcd_to_grid.py"
 
 
-def _copy_dir(src: Path, dst: Path) -> None:
+def _transform_grid_data(original_data: list[Any]) -> list[Any]:
+    original_2d = [
+        original_data[i * _GRID_SIZE : (i + 1) * _GRID_SIZE]
+        for i in range(_GRID_SIZE)
+    ]
+    transposed_2d = [list(row) for row in zip(*original_2d)]
+    transformed_2d = [row[::-1] for row in transposed_2d]
+    return [value for row in transformed_2d for value in row]
+
+
+def _write_transformed_grid_json(src: Path, dst: Path) -> None:
+    data = json.loads(src.read_text(encoding="utf-8"))
+    grid_data = data.get("data")
+    if not isinstance(grid_data, list) or len(grid_data) != _GRID_SIZE * _GRID_SIZE:
+        raise ValueError(f"grid_map JSON data must contain {_GRID_SIZE * _GRID_SIZE} cells: {src}")
+    data["data"] = _transform_grid_data(grid_data)
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    dst.write_text(
+        json.dumps(data, ensure_ascii=False, separators=(",", ":")),
+        encoding="utf-8",
+    )
+
+
+def _prepare_gridmap_dir(src: Path, dst: Path) -> dict[str, int]:
     if dst.exists():
         shutil.rmtree(dst)
-    shutil.copytree(src, dst)
+    dst.mkdir(parents=True, exist_ok=True)
+    transformed_json = 0
+    copied_files = 0
+    for item in sorted(src.iterdir(), key=lambda path: path.name):
+        target = dst / item.name
+        if item.is_dir():
+            shutil.copytree(item, target)
+            continue
+        if item.suffix.lower() == ".json":
+            _write_transformed_grid_json(item, target)
+            transformed_json += 1
+        else:
+            shutil.copy2(item, target)
+            copied_files += 1
+    return {"transformed_json_count": transformed_json, "copied_file_count": copied_files}
 
 
 def _discover_clip_gridmaps(
@@ -73,6 +113,7 @@ def _discover_clip_gridmaps(
                     "clip_name": clip_dir.name,
                     "source": str(grid_map),
                     "target": str(target),
+                    "transform": _GRID_TRANSFORM,
                 }
             )
     return discovered, missing_sync_data
@@ -305,9 +346,11 @@ def prepare_gridmap(
             "no existing VLA grid_map artifacts were found",
         )
 
+    transform_results = []
     if not dry_run:
         for item in discovered:
-            _copy_dir(Path(item["source"]), Path(item["target"]))
+            transform_result = _prepare_gridmap_dir(Path(item["source"]), Path(item["target"]))
+            transform_results.append({**item, **transform_result})
 
     prepared_paths = [item["target"] for item in discovered]
     result = {
@@ -316,6 +359,8 @@ def prepare_gridmap(
         "gridmaps": discovered,
         "prepared_gridmap_count": len(discovered),
         "prepared_paths": prepared_paths,
+        "gridmap_transform": _GRID_TRANSFORM,
+        "transform_results": transform_results,
         "missing_sync_data": missing_sync_data,
         "command_results": command_results,
     }

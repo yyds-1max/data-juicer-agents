@@ -1,5 +1,15 @@
+import json
+
 from data_juicer_agents.tools.vla.prepare_gridmap.logic import prepare_gridmap
 from data_juicer_agents.tools.vla.prepare_gridmap.tool import VLA_PREPARE_GRIDMAP
+
+
+def _grid_json_data():
+    data = [-1.0] * (200 * 200)
+    data[0] = 1.0
+    data[199] = 2.0
+    data[200] = 3.0
+    return data
 
 
 def test_prepare_gridmap_copy_existing_artifact_copies_grid_map_to_finish_temp(tmp_path):
@@ -13,7 +23,13 @@ def test_prepare_gridmap_copy_existing_artifact_copies_grid_map_to_finish_temp(t
         / "grid_map"
     )
     clip_gridmap.mkdir(parents=True)
-    (clip_gridmap / "1778812189469693651.json").write_text("{}\n", encoding="utf-8")
+    source_payload = {
+        "timestamp": "1778812189469693651",
+        "data": _grid_json_data(),
+    }
+    (clip_gridmap / "1778812189469693651.json").write_text(
+        json.dumps(source_payload), encoding="utf-8"
+    )
     finish_temp_clip = (
         tmp_path
         / "finish"
@@ -37,8 +53,14 @@ def test_prepare_gridmap_copy_existing_artifact_copies_grid_map_to_finish_temp(t
     copied = finish_temp_clip / "grid_map" / "1778812189469693651.json"
     assert result["ok"] is True
     assert copied.is_file()
+    copied_payload = json.loads(copied.read_text(encoding="utf-8"))
+    assert copied_payload["data"][0] == -1.0
+    assert copied_payload["data"][198] == 3.0
+    assert copied_payload["data"][199] == 1.0
+    assert copied_payload["data"][39999] == 2.0
     assert result["prepared_gridmap_count"] == 1
     assert result["prepared_paths"] == [str(finish_temp_clip / "grid_map")]
+    assert result["gridmaps"][0]["transform"] == "cp_gridmap_coordinate_transform"
 
 
 def test_prepare_gridmap_pointcloud_to_gridmap_dry_run_builds_generator_command(tmp_path):
