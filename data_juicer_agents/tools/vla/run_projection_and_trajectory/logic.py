@@ -133,7 +133,12 @@ def _scan_output_paths(save_path: str, save_path_temp: str) -> dict[str, list[st
     }
 
 
-def _resolve_trajectory_variant(trajectory_variant: str | None) -> str:
+def _resolve_trajectory_variant(
+    *, trajectory_variant: str | None, use_gridmap: bool
+) -> str:
+    legacy_without_gridmap = trajectory_variant is None and not use_gridmap
+    if legacy_without_gridmap:
+        return "cjl_with_gridmap"
     return trajectory_variant or "cjl_with_gridmap"
 
 
@@ -161,7 +166,9 @@ def build_projection_trajectory_plan(
     runtime = _runtime(data_python, data_env_setup)
     project_root = trajectory_path / "NuscenesAanlysis_smart_pts_project"
     pt_project_root = trajectory_path / "2_pt_project"
-    resolved_variant = _resolve_trajectory_variant(trajectory_variant)
+    resolved_variant = _resolve_trajectory_variant(
+        trajectory_variant=trajectory_variant, use_gridmap=use_gridmap
+    )
     trajectory_script = _trajectory_script_for_variant(resolved_variant)
     move_results_script = pt_project_root / "3_move_dir.py"
 
@@ -211,6 +218,7 @@ def build_projection_trajectory_plan(
         "data_python": data_python,
         "use_gridmap": True,
         "requested_use_gridmap": bool(use_gridmap),
+        "normalized_use_gridmap": True,
         "trajectory_variant": resolved_variant,
         "steps": steps,
         "commands": [step["command"] for step in steps],
@@ -370,6 +378,23 @@ def run_projection_and_trajectory(
             message="starting VLA projection and trajectory",
             data=plan,
         )
+
+    missing_gridmaps = _missing_prepared_gridmaps(plan["save_path_temp"])
+    if missing_gridmaps:
+        return _finish(
+            logger,
+            {
+                **plan,
+                "ok": False,
+                "error_type": "missing_prepared_gridmap",
+                "missing_gridmaps": missing_gridmaps,
+                "next_actions": [
+                    "run vla_prepare_gridmap before vla_run_projection_and_trajectory"
+                ],
+            },
+            "VLA projection input is missing prepared grid_map directories",
+        )
+
     if dry_run:
         return _finish(logger, plan, "planned VLA projection and trajectory")
 
@@ -396,22 +421,6 @@ def run_projection_and_trajectory(
                 "missing": missing,
             },
             "VLA projection legacy cwd or script paths are missing",
-        )
-
-    missing_gridmaps = _missing_prepared_gridmaps(plan["save_path_temp"])
-    if missing_gridmaps:
-        return _finish(
-            logger,
-            {
-                **plan,
-                "ok": False,
-                "error_type": "missing_prepared_gridmap",
-                "missing_gridmaps": missing_gridmaps,
-                "next_actions": [
-                    "run vla_prepare_gridmap before vla_run_projection_and_trajectory"
-                ],
-            },
-            "VLA projection input is missing prepared grid_map directories",
         )
 
     command_results = []

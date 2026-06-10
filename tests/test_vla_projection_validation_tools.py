@@ -49,6 +49,23 @@ def test_build_projection_trajectory_plan_0525_with_gridmap_uses_0525_script():
     assert "2_pt_project/2_othermethod_cjl_0525.py" in joined
     assert "2_pt_project/3_move_dir.py" in joined
     assert "2_pt_project/3_move_dir_no_gridmap.py" not in joined
+    assert "cp_gridmap.py" not in joined
+
+
+def test_build_projection_trajectory_plan_normalizes_legacy_no_gridmap_request():
+    result = build_projection_trajectory_plan(
+        save_path="/finish/20270515",
+        save_path_temp="/finish/20270515_temp",
+        trajectory_root="/traj",
+        data_env_setup="/srv/setup.sh",
+        data_python="/usr/bin/python3.8",
+        use_gridmap=False,
+    )
+
+    assert result["requested_use_gridmap"] is False
+    assert result["normalized_use_gridmap"] is True
+    assert result["use_gridmap"] is True
+    assert result["trajectory_variant"] == "cjl_with_gridmap"
 
 
 def test_validate_outputs_full_reports_missing_and_present(tmp_path):
@@ -273,6 +290,34 @@ def test_validate_outputs_reports_each_missing_final_clip_output(tmp_path):
     assert result["ok"] is True
 
 
+def test_validate_outputs_respects_explicit_expect_gridmap_false(tmp_path):
+    clip_root = tmp_path / "clip"
+    finish_root = tmp_path / "finish"
+    temp_clip = finish_root / "20270515_temp" / "samples" / "20270515" / "clip_a"
+    final_clip = finish_root / "20270515" / "seg_a" / "clip_a"
+    (clip_root / "20270515" / "seg_a" / "sync_data").mkdir(parents=True)
+    temp_clip.mkdir(parents=True)
+    (temp_clip / "master_black_black.yaml").write_text("box: []\n", encoding="utf-8")
+    (temp_clip / "img_master_black_black.txt").write_text("points\n", encoding="utf-8")
+    (final_clip / "rout_plot_v2").mkdir(parents=True)
+    (final_clip / "clip_a_trajectory.json").write_text("[]\n", encoding="utf-8")
+    (final_clip / "clip_a_speed_direction.json").write_text("{}\n", encoding="utf-8")
+    (final_clip / "master_black_black_world.txt").write_text("1 2 3\n", encoding="utf-8")
+
+    result = validate_outputs(
+        date="20270515",
+        clip_root=str(clip_root),
+        finish_root=str(finish_root),
+        selected_segments=["seg_a"],
+        level="full",
+        expect_gridmap_output=False,
+    )
+
+    assert result["ok"] is True
+    assert result["checks"]["final_outputs"]["gridmap_required"] is False
+    assert result["checks"]["final_outputs"]["clips"]["clip_a"]["missing"] == []
+
+
 def test_run_projection_and_trajectory_dry_run_returns_planned_outputs():
     result = run_projection_and_trajectory(
         save_path="/finish/20270515",
@@ -369,6 +414,104 @@ def test_run_projection_and_trajectory_execute_returns_actual_output_paths(
     assert result["output_paths"]["moved_final_result_paths"] == result[
         "moved_final_result_paths"
     ]
+
+
+def test_run_projection_and_trajectory_fails_when_prepared_gridmap_is_missing(
+    tmp_path, monkeypatch
+):
+    save_path = tmp_path / "finish" / "20270515"
+    save_path_temp = tmp_path / "finish" / "20270515_temp"
+    (save_path_temp / "samples" / "20270515" / "clip_a").mkdir(parents=True)
+    trajectory_root = tmp_path / "traj"
+    for script in [
+        trajectory_root / "NuscenesAanlysis_smart_pts_project" / "main.py",
+        trajectory_root / "2_pt_project" / "0_img2world.py",
+        trajectory_root / "2_pt_project" / "4_speed_direction_odom.py",
+        trajectory_root / "2_pt_project" / "2_othermethod_cjl.py",
+        trajectory_root / "2_pt_project" / "3_move_dir.py",
+    ]:
+        script.parent.mkdir(parents=True, exist_ok=True)
+        script.write_text("# legacy script placeholder\n", encoding="utf-8")
+
+    def fake_run(*args, **kwargs):
+        raise AssertionError("projection commands must not run without grid_map")
+
+    monkeypatch.setattr(
+        (
+            "data_juicer_agents.tools.vla.run_projection_and_trajectory.logic."
+            "subprocess.run"
+        ),
+        fake_run,
+    )
+
+    result = run_projection_and_trajectory(
+        save_path=str(save_path),
+        save_path_temp=str(save_path_temp),
+        trajectory_root=str(trajectory_root),
+        data_env_setup=None,
+        dry_run=False,
+    )
+
+    assert result["ok"] is False
+    assert result["error_type"] == "missing_prepared_gridmap"
+    assert result["missing_gridmaps"] == [
+        {
+            "clip": "clip_a",
+            "path": str(
+                save_path_temp / "samples" / "20270515" / "clip_a" / "grid_map"
+            ),
+        }
+    ]
+    assert result["next_actions"] == [
+        "run vla_prepare_gridmap before vla_run_projection_and_trajectory"
+    ]
+
+
+def test_run_projection_and_trajectory_dry_run_reports_missing_prepared_gridmap(
+    tmp_path,
+):
+    save_path = tmp_path / "finish" / "20270515"
+    save_path_temp = tmp_path / "finish" / "20270515_temp"
+    (save_path_temp / "samples" / "20270515" / "clip_a").mkdir(parents=True)
+
+    result = run_projection_and_trajectory(
+        save_path=str(save_path),
+        save_path_temp=str(save_path_temp),
+        trajectory_root=str(tmp_path / "missing_traj"),
+        data_env_setup=None,
+        dry_run=True,
+    )
+
+    assert result["ok"] is False
+    assert result["error_type"] == "missing_prepared_gridmap"
+    assert result["missing_gridmaps"] == [
+        {
+            "clip": "clip_a",
+            "path": str(
+                save_path_temp / "samples" / "20270515" / "clip_a" / "grid_map"
+            ),
+        }
+    ]
+
+
+def test_run_projection_and_trajectory_reports_missing_gridmap_before_legacy_paths(
+    tmp_path,
+):
+    save_path = tmp_path / "finish" / "20270515"
+    save_path_temp = tmp_path / "finish" / "20270515_temp"
+    (save_path_temp / "samples" / "20270515" / "clip_a").mkdir(parents=True)
+
+    result = run_projection_and_trajectory(
+        save_path=str(save_path),
+        save_path_temp=str(save_path_temp),
+        trajectory_root=str(tmp_path / "missing_traj"),
+        data_env_setup=None,
+        dry_run=False,
+    )
+
+    assert result["ok"] is False
+    assert result["error_type"] == "missing_prepared_gridmap"
+    assert "missing" not in result
 
 
 def test_run_projection_and_trajectory_timeout_writes_stage_end(tmp_path, monkeypatch):
