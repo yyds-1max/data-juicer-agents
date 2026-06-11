@@ -5,10 +5,18 @@ from data_juicer_agents.core.tool import list_tool_specs
 def test_vla_tools_are_auto_discovered():
     names = {spec.name for spec in list_tool_specs()}
 
+    assert "vla_run_workflow" in names
     assert "vla_check_runtime" in names
     assert "vla_extract_and_sync" in names
     assert "vla_run_manual_box_annotation" in names
     assert "vla_validate_outputs" in names
+
+
+def test_session_toolkit_prioritizes_structured_vla_workflow_tool():
+    names = [spec.name for spec in get_session_tool_specs()]
+
+    assert names.index("vla_run_workflow") < names.index("vla_check_runtime")
+    assert names.index("vla_run_workflow") < names.index("vla_extract_and_sync")
 
 
 def test_session_toolkit_orders_vla_before_generic_process_tools():

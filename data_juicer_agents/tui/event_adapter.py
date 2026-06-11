@@ -186,6 +186,34 @@ def apply_event(state: TuiState, event: Dict[str, Any]) -> None:
             state.status_line = "Reasoning updated"
         return
 
+    if event_type.startswith("vla_"):
+        summary = _format_preview(event.get("summary"), max_chars=220)
+        title = summary or event_type
+        status_value = str(event.get("status", "")).strip()
+        timeline_status = "done"
+        if event_type.endswith("_failed") or status_value == "failed":
+            timeline_status = "failed"
+        elif event_type.endswith("_started") or status_value in {"planning", "running"}:
+            timeline_status = "running"
+        elif event_type.endswith("_paused") or status_value in {"paused", "needs_user"}:
+            timeline_status = "paused"
+        tool = str(event.get("tool", "")).strip() or "vla_run_workflow"
+        detail_parts = []
+        for key in ("stage_id", "variant", "next_action", "run_id"):
+            value = str(event.get(key, "") or "").strip()
+            if value:
+                detail_parts.append(f"{key}={value}")
+        state.status_line = title
+        state.add_timeline(
+            kind="tool",
+            title=title,
+            text=", ".join(detail_parts),
+            status=timeline_status,
+            tool=tool,
+            timestamp=ts,
+        )
+        return
+
     state.status_line = f"Event: {event_type}"
     state.add_timeline(
         kind="system",

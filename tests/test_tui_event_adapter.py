@@ -201,3 +201,24 @@ def test_apply_event_adds_reasoning_note_with_planned_tools():
     tool_items = [item for item in state.timeline if item.kind == "tool" and item.status == "planned"]
     assert not tool_items
     assert state.timeline[-1].kind == "reasoning"
+
+
+def test_apply_event_adds_vla_workflow_progress_timeline_item():
+    state = TuiState()
+
+    apply_event(
+        state,
+        {
+            "type": "vla_stage_completed",
+            "summary": "Executor-Agent: extract_and_sync 完成",
+            "stage_id": "extract_and_sync",
+            "tool": "vla_extract_and_sync",
+            "status": "success",
+        },
+    )
+
+    assert state.status_line == "Executor-Agent: extract_and_sync 完成"
+    assert state.timeline[-1].kind == "tool"
+    assert state.timeline[-1].title == "Executor-Agent: extract_and_sync 完成"
+    assert state.timeline[-1].tool == "vla_extract_and_sync"
+    assert state.timeline[-1].status == "done"

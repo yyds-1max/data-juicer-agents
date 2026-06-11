@@ -32,12 +32,17 @@ def _build_tool_context(runtime: SessionToolRuntime) -> ToolContext:
         working_dir=str(runtime.state.working_dir or "./.djx"),
         env=dict(os.environ),
         artifacts_dir=str(runtime.storage_root()),
+        runtime_values={
+            "session_runtime": runtime,
+            "emit_event": runtime.emit_event,
+        },
     )
 
 
-def _session_sort_key(spec: ToolSpec) -> Tuple[int, str]:
+def _session_sort_key(spec: ToolSpec) -> Tuple[int, int, str]:
     priority = min((_SESSION_GROUP_PRIORITY.get(tag, 999) for tag in spec.tags), default=999)
-    return priority, spec.name
+    name_priority = 0 if spec.name == "vla_run_workflow" else 1
+    return priority, name_priority, spec.name
 
 
 def get_session_tool_specs() -> List[ToolSpec]:

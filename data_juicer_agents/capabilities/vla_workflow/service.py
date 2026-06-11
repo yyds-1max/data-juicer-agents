@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
-"""`djx vla-workflow` command handlers."""
+"""Reusable VLA workflow runner for CLI and session tools."""
 
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
-from data_juicer_agents.capabilities.vla_workflow.service import execute_vla_workflow
 from data_juicer_agents.capabilities.vla_workflow.graph import (
     VLAWorkflowState,
     ask_confirmation,
@@ -60,11 +60,22 @@ from data_juicer_agents.tools.vla.inspect_rosbag_metadata.logic import (
 STAGE_RESULTS_FILE = "stage_results.json"
 
 
-def _emit_json(payload: dict[str, Any]) -> None:
-    print(json.dumps(payload, ensure_ascii=False, indent=2))
+@dataclass(frozen=True)
+class VLAWorkflowRunResult:
+    exit_code: int
+    payload: dict[str, Any]
 
 
-def _segments_arg(value: str | None) -> str | list[str]:
+def _get_param(params: Any, name: str, default: Any = None) -> Any:
+    if isinstance(params, dict):
+        return params.get(name, default)
+    return getattr(params, name, default)
+
+
+def _segments_arg(value: str | list[str] | None) -> str | list[str]:
+    if isinstance(value, list):
+        items = [str(item).strip() for item in value if str(item).strip()]
+        return items or "all"
     raw = str(value or "all").strip()
     if not raw or raw.lower() == "all":
         return "all"
@@ -77,7 +88,7 @@ def _segments_for_tools(value: str | list[str]) -> list[str]:
     return list(value)
 
 
-def _build_tool_context() -> ToolContext:
+def _default_tool_context() -> ToolContext:
     root = str(Path("./.djx").expanduser())
     return ToolContext(working_dir=root, artifacts_dir=root)
 
@@ -210,14 +221,34 @@ def _navigation_observations(
     ]
 
 
-def _planning_state(args: Any) -> VLAWorkflowState:
-    scenario = str(getattr(args, "scenario", "") or "navigation_vla").strip()
-    selected_segments = _segments_arg(getattr(args, "segments", None))
+def _emit(
+    progress_callback: Callable[..., None] | None,
+    event_type: str,
+    **payload: Any,
+) -> None:
+    if progress_callback is None:
+        return
+    try:
+        progress_callback(event_type, **payload)
+    except TypeError:
+        event = {"type": event_type}
+        event.update(payload)
+        progress_callback(event)
+
+
+def _planning_state(
+    params: Any,
+    *,
+    tool_context: ToolContext | None,
+    progress_callback: Callable[..., None] | None,
+) -> VLAWorkflowState:
+    scenario = str(_get_param(params, "scenario", "") or "navigation_vla").strip()
+    selected_segments = _segments_arg(_get_param(params, "segments", None))
     user_inputs: dict[str, Any] = {
         "scenario": scenario,
-        "date": str(getattr(args, "date", "") or "").strip(),
+        "date": str(_get_param(params, "date", "") or "").strip(),
         "selected_segments": selected_segments,
-        "scene_mode": str(getattr(args, "scene_mode", "") or "out").strip(),
+        "scene_mode": str(_get_param(params, "scene_mode", "") or "out").strip(),
     }
     paths = VLAPaths()
     user_inputs.update(
@@ -231,14 +262,30 @@ def _planning_state(args: Any) -> VLAWorkflowState:
     state = VLAWorkflowState(
         user_request=(
             f"Run {scenario} workflow for date {user_inputs['date']} "
-            f"segments {getattr(args, 'segments', 'all')}."
+            f"segments {_get_param(params, 'segments', 'all')}."
         ),
         scenario=scenario,
         user_inputs=user_inputs,
-        run_id=str(getattr(args, "run_id", "") or "").strip(),
-        approval_status="approved" if getattr(args, "approve", False) else "not_required",
+        run_id=str(_get_param(params, "run_id", "") or "").strip(),
+        approval_status="approved" if _get_param(params, "approve", False) else "not_required",
     )
-    state = initialize_state(state, tool_context=_build_tool_context())
+    state = initialize_state(state, tool_context=tool_context or _default_tool_context())
+    _emit(
+        progress_callback,
+        "vla_workflow_started",
+        run_id=state.run_id,
+        run_dir=state.run_dir,
+        status=state.status,
+        summary="Plan-Agent: 正在生成导航 VLA 处理计划",
+    )
+    _emit(
+        progress_callback,
+        "vla_plan_started",
+        run_id=state.run_id,
+        run_dir=state.run_dir,
+        status=state.status,
+        summary="Plan-Agent: 正在生成导航 VLA 处理计划",
+    )
 
     if scenario == "navigation_vla":
         state.observations = _navigation_observations(
@@ -260,7 +307,17 @@ def _planning_state(args: Any) -> VLAWorkflowState:
     state = validate_plan_node(state)
     if state.status == "failed":
         return state
-    return ask_confirmation(state)
+    state = ask_confirmation(state)
+    _emit(
+        progress_callback,
+        "vla_plan_completed",
+        run_id=state.run_id,
+        run_dir=state.run_dir,
+        status=state.status,
+        summary=_plan_completed_summary(state),
+        plan_id=state.plan.plan_id if state.plan is not None else None,
+    )
+    return state
 
 
 def _artifact_paths(state: VLAWorkflowState) -> dict[str, str]:
@@ -276,7 +333,7 @@ def _artifact_paths(state: VLAWorkflowState) -> dict[str, str]:
 
 def _payload(state: VLAWorkflowState, *, dry_run: bool, exit_code: int) -> dict[str, Any]:
     plan = state.plan
-    return {
+    payload = {
         "ok": exit_code == 0,
         "action": "vla_workflow_run",
         "dry_run": bool(dry_run),
@@ -294,6 +351,9 @@ def _payload(state: VLAWorkflowState, *, dry_run: bool, exit_code: int) -> dict[
         "artifacts": _artifact_paths(state),
         "messages": state.messages,
     }
+    payload["progress_summary"] = _progress_summary(state)
+    payload["user_message"] = _user_message(state)
+    return payload
 
 
 def _execution_context(state: VLAWorkflowState, *, dry_run: bool) -> dict[str, Any]:
@@ -342,7 +402,11 @@ def _persist_execution_artifacts(state: VLAWorkflowState) -> None:
     )
 
 
-def _execute_confirmed_workflow(state: VLAWorkflowState) -> VLAWorkflowState:
+def _execute_confirmed_workflow(
+    state: VLAWorkflowState,
+    *,
+    progress_callback: Callable[..., None] | None,
+) -> VLAWorkflowState:
     updated = state.model_copy(deep=True)
     updated.runtime_context = _execution_context(updated, dry_run=False)
 
@@ -353,10 +417,41 @@ def _execute_confirmed_workflow(state: VLAWorkflowState) -> VLAWorkflowState:
             _persist_execution_artifacts(updated)
             return updated
 
+        stage = _current_stage_payload(updated)
+        _emit(
+            progress_callback,
+            "vla_stage_started",
+            **stage,
+            run_id=updated.run_id,
+            run_dir=updated.run_dir,
+            status=updated.status,
+            summary=f"Executor-Agent: {stage.get('stage_id') or 'stage'} 开始",
+        )
+
         updated = executor_agent_execute_stage(updated)
+        latest = updated.stage_results[-1] if updated.stage_results else None
         updated = update_state(updated)
         updated = route_after_stage(updated)
         _persist_execution_artifacts(updated)
+
+        if latest is not None:
+            event_type = (
+                "vla_stage_paused"
+                if latest.next_action == "pause"
+                else "vla_stage_completed"
+            )
+            _emit(
+                progress_callback,
+                event_type,
+                run_id=updated.run_id,
+                run_dir=updated.run_dir,
+                stage_id=latest.stage_id,
+                tool=latest.tool,
+                variant=latest.variant,
+                status=latest.status,
+                next_action=latest.next_action,
+                summary=_stage_summary(latest, paused=latest.next_action == "pause"),
+            )
 
         if updated.route == "final_summary":
             updated = final_summary(updated)
@@ -369,21 +464,139 @@ def _execute_confirmed_workflow(state: VLAWorkflowState) -> VLAWorkflowState:
     return updated
 
 
-def run_vla_workflow(args: Any) -> int:
-    action = str(getattr(args, "vla_workflow_action", "") or "").strip()
-    if action != "run":
-        _emit_json(
-            {
-                "ok": False,
-                "action": "vla_workflow",
-                "error_type": "unknown_action",
-                "message": f"unknown vla-workflow action: {action}",
-            }
+def execute_vla_workflow(
+    params: Any,
+    *,
+    tool_context: ToolContext | None = None,
+    progress_callback: Callable[..., None] | None = None,
+) -> VLAWorkflowRunResult:
+    try:
+        state = _planning_state(
+            params,
+            tool_context=tool_context,
+            progress_callback=progress_callback,
         )
-        return 2
+    except Exception as exc:
+        return VLAWorkflowRunResult(
+            exit_code=2,
+            payload={
+                "ok": False,
+                "action": "vla_workflow_run",
+                "error_type": "workflow_failed",
+                "message": str(exc),
+            },
+        )
 
-    result = execute_vla_workflow(args, tool_context=_build_tool_context())
-    if result.exit_code == 3:
-        result.payload["message"] = "workflow plan requires --approve before execution"
-    _emit_json(result.payload)
-    return result.exit_code
+    dry_run = bool(_get_param(params, "dry_run", False))
+    if dry_run:
+        exit_code = 0 if state.status != "failed" else 2
+    elif state.status == "awaiting_confirmation" and not _get_param(params, "approve", False):
+        exit_code = 3
+    else:
+        if _get_param(params, "approve", False) and state.status == "running":
+            state = _execute_confirmed_workflow(
+                state,
+                progress_callback=progress_callback,
+            )
+        exit_code = 0 if state.status != "failed" else 2
+
+    payload = _payload(state, dry_run=dry_run, exit_code=exit_code)
+    if exit_code == 3:
+        payload["error_type"] = "approval_required"
+        payload["message"] = "workflow plan requires approve before execution"
+    elif state.status == "failed":
+        payload["error_type"] = "workflow_failed"
+        payload["message"] = "workflow planning failed"
+
+    _emit_final_event(progress_callback, state, exit_code=exit_code)
+    return VLAWorkflowRunResult(exit_code=exit_code, payload=payload)
+
+
+def _current_stage_payload(state: VLAWorkflowState) -> dict[str, Any]:
+    if state.plan is None or not state.current_stage_id:
+        return {"stage_id": state.current_stage_id}
+    for stage in state.plan.active_stages:
+        if stage.id == state.current_stage_id:
+            return {
+                "stage_id": stage.id,
+                "tool": stage.tool,
+                "variant": stage.variant,
+            }
+    return {"stage_id": state.current_stage_id}
+
+
+def _emit_final_event(
+    progress_callback: Callable[..., None] | None,
+    state: VLAWorkflowState,
+    *,
+    exit_code: int,
+) -> None:
+    if state.status == "failed" or exit_code == 2:
+        event_type = "vla_workflow_failed"
+    else:
+        event_type = "vla_workflow_completed"
+    _emit(
+        progress_callback,
+        event_type,
+        run_id=state.run_id,
+        run_dir=state.run_dir,
+        status=state.status,
+        stage_id=state.current_stage_id,
+        summary=_user_message(state),
+    )
+
+
+def _plan_completed_summary(state: VLAWorkflowState) -> str:
+    if state.plan is None:
+        return "Plan-Agent: 处理计划生成失败"
+    variants = []
+    for stage in state.plan.active_stages:
+        if stage.variant:
+            variants.append(stage.variant)
+    selected = " / ".join(dict.fromkeys(variants[:4]))
+    if selected:
+        return f"Plan-Agent: 已选择 {selected}"
+    return "Plan-Agent: 已生成导航 VLA 处理计划"
+
+
+def _stage_summary(stage_result: Any, *, paused: bool) -> str:
+    if paused:
+        return f"Executor-Agent: 等待人工标注 ({stage_result.stage_id})"
+    if stage_result.status == "success":
+        return f"Executor-Agent: {stage_result.stage_id} 完成"
+    return f"Executor-Agent: {stage_result.stage_id} {stage_result.status}"
+
+
+def _progress_summary(state: VLAWorkflowState) -> str:
+    if not state.stage_results:
+        return _plan_completed_summary(state)
+    latest = state.stage_results[-1]
+    return _stage_summary(latest, paused=latest.next_action == "pause")
+
+
+def _user_message(state: VLAWorkflowState) -> str:
+    if state.status == "completed":
+        return (
+            f"VLA workflow completed: run_id={state.run_id}, "
+            f"stages={len(state.stage_results)}, run_dir={state.run_dir}"
+        )
+    if state.status == "paused":
+        return (
+            f"VLA workflow paused at {state.current_stage_id}; "
+            f"run_id={state.run_id}, run_dir={state.run_dir}"
+        )
+    if state.status == "awaiting_confirmation":
+        return (
+            f"VLA workflow plan is awaiting confirmation: run_id={state.run_id}, "
+            f"run_dir={state.run_dir}"
+        )
+    if state.status == "failed":
+        return f"VLA workflow failed: run_id={state.run_id}, run_dir={state.run_dir}"
+    return f"VLA workflow status={state.status}: run_id={state.run_id}, run_dir={state.run_dir}"
+
+
+__all__ = [
+    "STAGE_RESULTS_FILE",
+    "VLAWorkflowRunResult",
+    "execute_vla_workflow",
+]

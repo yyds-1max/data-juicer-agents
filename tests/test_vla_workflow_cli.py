@@ -235,5 +235,6 @@ def test_session_prompt_prefers_vla_workflow_for_complex_navigation_requests():
     agent = DJSessionAgent(use_llm_router=False)
     prompt = agent._session_sys_prompt()
 
-    assert "complex navigation VLA data processing should use vla_workflow capability" in prompt
+    assert "call `vla_run_workflow` exactly once" in prompt
+    assert "Do not call atomic VLA tools unless recovering a failed stage" in prompt
     assert "legacy single ReAct VLA tool chain is only for manual recovery" in prompt

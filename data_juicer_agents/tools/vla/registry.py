@@ -47,6 +47,7 @@ from data_juicer_agents.tools.vla.prepare_raw_temp import VLA_PREPARE_RAW_TEMP
 from data_juicer_agents.tools.vla.run_manual_box_annotation import (
     VLA_RUN_MANUAL_BOX_ANNOTATION,
 )
+from data_juicer_agents.tools.vla.run_workflow import VLA_RUN_WORKFLOW
 from data_juicer_agents.tools.vla.run_projection_and_trajectory import (
     VLA_RUN_PROJECTION_AND_TRAJECTORY,
 )
@@ -55,6 +56,7 @@ from data_juicer_agents.tools.vla.validate_outputs import VLA_VALIDATE_OUTPUTS
 
 
 TOOL_SPECS: List[ToolSpec] = [
+    VLA_RUN_WORKFLOW,
     VLA_CHECK_RUNTIME,
     VLA_INSPECT_RAW_DATE,
     VLA_INSPECT_RAW_LAYOUT,
