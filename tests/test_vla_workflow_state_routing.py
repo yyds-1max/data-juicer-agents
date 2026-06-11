@@ -2,7 +2,20 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from typing import Any
 
+from pydantic import BaseModel, ConfigDict
+
+from data_juicer_agents.capabilities.vla_workflow.executor_agent import VLAStageResult
+from data_juicer_agents.capabilities.vla_workflow.graph import (
+    VLAWorkflowState,
+    ask_confirmation,
+    executor_agent_execute_stage,
+    final_summary,
+    route_after_stage,
+    select_next_stage,
+    update_state,
+)
 from data_juicer_agents.capabilities.vla_workflow.persistence import (
     append_observation,
     build_workflow_run_dir,
@@ -20,7 +33,12 @@ from data_juicer_agents.capabilities.vla_workflow.plan_agent import (
     build_planning_notes,
     deterministic_plan_vla_workflow,
 )
-from data_juicer_agents.core.tool import ToolContext
+from data_juicer_agents.capabilities.vla_workflow.plan.model import (
+    VLAWorkflowPlan,
+    VLAWorkflowStage,
+)
+from data_juicer_agents.capabilities.vla_workflow.state import PlanAgentMemory
+from data_juicer_agents.core.tool import ToolContext, ToolResult, ToolSpec
 
 
 def _copy_catalog(*, pointcloud_status: str = "available"):
@@ -29,9 +47,11 @@ def _copy_catalog(*, pointcloud_status: str = "available"):
         if capability.tool != "vla_prepare_gridmap":
             continue
         capability.variants = [
-            variant.model_copy(update={"status": pointcloud_status}, deep=True)
-            if variant.id == "pointcloud_to_gridmap"
-            else variant
+            (
+                variant.model_copy(update={"status": pointcloud_status}, deep=True)
+                if variant.id == "pointcloud_to_gridmap"
+                else variant
+            )
             for variant in capability.variants
         ]
     return catalog
@@ -88,7 +108,9 @@ def _observations(
     gridmap_source: str = "existing_gridmap_artifact",
     projection_ready: bool = False,
 ):
-    query_raw_dir = "rs32_lidar_points" if topic_schema == "go2w_current_topics" else "lidar_points"
+    query_raw_dir = (
+        "rs32_lidar_points" if topic_schema == "go2w_current_topics" else "lidar_points"
+    )
     topics = _topics(topic_schema)
     return [
         build_observation(
@@ -222,7 +244,9 @@ def _stage_by_kind(plan, stage_kind: str):
 
 
 def test_workflow_persistence_writes_and_loads_planning_artifacts(tmp_path):
-    run_dir = tmp_path / "runs" / "20270605" / "vla_navigation_vla_20270605_20260610120000"
+    run_dir = (
+        tmp_path / "runs" / "20270605" / "vla_navigation_vla_20270605_20260610120000"
+    )
 
     planning_notes = {
         "notes_id": "notes_20270605_navigation_001",
@@ -339,10 +363,16 @@ def test_plan_agent_generates_20270515_copy_existing_gridmap_plan():
     assert profile.topics.topic_schema == "u_legacy_topics"
     assert profile.sync.query_raw_dir == "lidar_points"
     assert profile.gridmap.gridmap_source == "existing_gridmap_artifact"
-    assert profile.stage_variants["gridmap_processing"].variant == "copy_existing_artifact"
+    assert (
+        profile.stage_variants["gridmap_processing"].variant == "copy_existing_artifact"
+    )
     assert _stage_by_kind(plan, "gridmap_processing").tool == "vla_prepare_gridmap"
-    assert _stage_by_kind(plan, "gridmap_processing").variant == "copy_existing_artifact"
-    assert _stage_by_kind(plan, "projection_and_trajectory").variant == "cjl_with_gridmap"
+    assert (
+        _stage_by_kind(plan, "gridmap_processing").variant == "copy_existing_artifact"
+    )
+    assert (
+        _stage_by_kind(plan, "projection_and_trajectory").variant == "cjl_with_gridmap"
+    )
     assert _stage_by_kind(plan, "validate_outputs").variant == "expect_gridmap"
     assert plan.approval_required is True
 
@@ -358,7 +388,9 @@ def test_plan_agent_generates_20270515_pointcloud_gridmap_plan_when_generator_av
     plan = result["plan"]
 
     assert profile.gridmap.gridmap_source == "generated_from_pointcloud"
-    assert profile.stage_variants["gridmap_processing"].variant == "pointcloud_to_gridmap"
+    assert (
+        profile.stage_variants["gridmap_processing"].variant == "pointcloud_to_gridmap"
+    )
     assert _stage_by_kind(plan, "gridmap_processing").variant == "pointcloud_to_gridmap"
 
 
@@ -385,10 +417,17 @@ def test_plan_agent_generates_20270605_copy_existing_gridmap_plan():
 
     assert profile.topics.topic_schema == "go2w_current_topics"
     assert profile.sync.query_raw_dir == "rs32_lidar_points"
-    assert profile.stage_variants["gridmap_processing"].variant == "copy_existing_artifact"
+    assert (
+        profile.stage_variants["gridmap_processing"].variant == "copy_existing_artifact"
+    )
     assert _stage_by_kind(plan, "gridmap_processing").tool == "vla_prepare_gridmap"
-    assert _stage_by_kind(plan, "gridmap_processing").variant == "copy_existing_artifact"
-    assert _stage_by_kind(plan, "projection_and_trajectory").variant == "cjl_0525_with_gridmap"
+    assert (
+        _stage_by_kind(plan, "gridmap_processing").variant == "copy_existing_artifact"
+    )
+    assert (
+        _stage_by_kind(plan, "projection_and_trajectory").variant
+        == "cjl_0525_with_gridmap"
+    )
     assert _stage_by_kind(plan, "validate_outputs").variant == "expect_gridmap"
 
 
@@ -403,9 +442,14 @@ def test_plan_agent_generates_20270605_pointcloud_gridmap_plan_when_generator_av
     plan = result["plan"]
 
     assert profile.gridmap.gridmap_source == "generated_from_pointcloud"
-    assert profile.stage_variants["gridmap_processing"].variant == "pointcloud_to_gridmap"
+    assert (
+        profile.stage_variants["gridmap_processing"].variant == "pointcloud_to_gridmap"
+    )
     assert _stage_by_kind(plan, "gridmap_processing").variant == "pointcloud_to_gridmap"
-    assert _stage_by_kind(plan, "projection_and_trajectory").variant == "cjl_0525_with_gridmap"
+    assert (
+        _stage_by_kind(plan, "projection_and_trajectory").variant
+        == "cjl_0525_with_gridmap"
+    )
 
 
 def test_plan_agent_skips_20270605_gridmap_processing_when_projection_input_ready():
@@ -467,3 +511,248 @@ def test_plan_agent_blocks_custom_topics_when_mapping_variant_is_unavailable():
     issue_types = {issue.type for issue in profile.blocking_issues}
     assert "missing_custom_topic_mapping_support" in issue_types
     assert plan.active_stages == []
+
+
+class _GraphAnyInput(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+
+def _graph_stage(
+    stage_kind: str,
+    *,
+    effects: str = "execute",
+    tool: str | None = None,
+) -> VLAWorkflowStage:
+    return VLAWorkflowStage(
+        id=stage_kind,
+        stage_kind=stage_kind,
+        tool=tool or f"vla_{stage_kind}",
+        variant="default",
+        effects=effects,
+    )
+
+
+def _graph_plan(stages: list[VLAWorkflowStage]) -> VLAWorkflowPlan:
+    return VLAWorkflowPlan(
+        plan_id="vla_plan_graph_test",
+        scenario="navigation_vla",
+        status="pending",
+        planning_notes_ref="planning_notes.json",
+        observations_ref="observations.json",
+        data_profile_ref="data_profile.json",
+        active_stages=stages,
+        approval_required=any(
+            stage.effects in {"write", "execute", "external"} for stage in stages
+        ),
+    )
+
+
+def _graph_profile() -> dict[str, Any]:
+    return {
+        "dataset": {
+            "date": "20270515",
+            "raw_root": "/media/heying/hy_data1/VLADatasets/raw_data",
+            "raw_date_dir": "/media/heying/hy_data1/VLADatasets/raw_data/20270515",
+            "raw_work_dir": "/media/heying/hy_data1/VLADatasets/raw_data/20270515_temp",
+            "clip_root": "/media/heying/hy_data1/VLADatasets/clip_data",
+            "finish_root": "/media/heying/hy_data1/VLADatasets/finish_data",
+            "trajectory_root": "/media/heying/hy_data1/Trajectory_visualization",
+            "scene_mode": "out",
+            "selected_segments": ["segment_a"],
+        },
+        "sync": {"query_raw_dir": "lidar_points"},
+        "gridmap": {"expect_gridmap_output": True},
+        "stage_variants": {},
+    }
+
+
+def _graph_state(
+    plan: VLAWorkflowPlan,
+    *,
+    approval_status: str = "not_required",
+    status: str = "running",
+    current_stage_id: str | None = None,
+    stage_results: list[VLAStageResult] | None = None,
+    runtime_context: dict[str, Any] | None = None,
+) -> VLAWorkflowState:
+    return VLAWorkflowState(
+        user_request="process navigation VLA data",
+        scenario="navigation_vla",
+        user_inputs={"date": "20270515"},
+        run_id="vla_navigation_vla_20270515_test",
+        run_dir="/media/heying/hy_data1/VLADatasets/.djx/vla_workflow_runs/test",
+        plan_agent_memory=PlanAgentMemory(scenario="navigation_vla"),
+        planning_notes_ref="planning_notes.json",
+        observations_ref="observations.json",
+        data_profile_ref="data_profile.json",
+        plan_ref="plan.json",
+        data_profile=_graph_profile(),
+        plan=plan,
+        current_stage_id=current_stage_id,
+        stage_results=list(stage_results or []),
+        approval_status=approval_status,
+        status=status,
+        runtime_context=dict(runtime_context or {}),
+    )
+
+
+def _stage_result(
+    stage: VLAWorkflowStage,
+    *,
+    status: str = "success",
+    next_action: str = "continue",
+    error_type: str = "",
+) -> VLAStageResult:
+    return VLAStageResult(
+        stage_id=stage.id,
+        stage_kind=stage.stage_kind,
+        tool=stage.tool,
+        variant=stage.variant,
+        status=status,
+        tool_result={"ok": status == "success"},
+        error_type=error_type,
+        next_action=next_action,
+        summary=f"{stage.id} {status}",
+    )
+
+
+def test_graph_requires_confirmation_for_execute_stage():
+    state = _graph_state(
+        _graph_plan([_graph_stage("extract_and_sync", effects="execute")]),
+        approval_status="not_required",
+        status="planning",
+    )
+
+    state = ask_confirmation(state)
+
+    assert state.approval_status == "pending"
+    assert state.status == "awaiting_confirmation"
+    assert state.messages[-1]["type"] == "approval_required"
+    assert state.messages[-1]["stage_ids"] == ["extract_and_sync"]
+
+
+def test_graph_does_not_enter_executor_without_confirmation():
+    calls: list[dict[str, Any]] = []
+
+    def _execute(ctx: ToolContext, args: BaseModel) -> ToolResult:
+        calls.append(args.model_dump())
+        return ToolResult.success(summary="should not run")
+
+    stage = _graph_stage("extract_and_sync", effects="execute")
+    state = _graph_state(
+        _graph_plan([stage]),
+        approval_status="pending",
+        status="awaiting_confirmation",
+        current_stage_id=stage.id,
+    )
+
+    state = executor_agent_execute_stage(
+        state,
+        registry={
+            stage.tool: ToolSpec(
+                name=stage.tool,
+                description="fake executor",
+                input_model=_GraphAnyInput,
+                output_model=None,
+                executor=_execute,
+            )
+        },
+    )
+
+    assert calls == []
+    assert state.stage_results == []
+    assert state.status == "awaiting_confirmation"
+
+
+def test_graph_stage_success_routes_to_next_stage():
+    first = _graph_stage("inspect_raw_date", effects="read")
+    second = _graph_stage("extract_and_sync", effects="read")
+    state = _graph_state(
+        _graph_plan([first, second]),
+        current_stage_id=first.id,
+        stage_results=[_stage_result(first)],
+    )
+
+    state = update_state(state)
+    state = route_after_stage(state)
+    state = select_next_stage(state)
+
+    assert state.plan is not None
+    assert state.plan.active_stages[0].status == "success"
+    assert state.current_stage_id == second.id
+
+
+def test_graph_manual_checkpoint_pause_sets_paused_status():
+    stage = _graph_stage("manual_box_annotation", effects="external")
+    state = _graph_state(
+        _graph_plan([stage]),
+        approval_status="approved",
+        current_stage_id=stage.id,
+        stage_results=[_stage_result(stage, status="needs_user", next_action="pause")],
+    )
+
+    state = update_state(state)
+    state = route_after_stage(state)
+
+    assert state.status == "paused"
+    assert state.current_stage_id == stage.id
+    assert state.messages[-1]["type"] == "workflow_paused"
+
+
+def test_graph_failure_retry_limit_marks_workflow_failed():
+    stage = _graph_stage("extract_and_sync", effects="execute")
+    state = _graph_state(
+        _graph_plan([stage]),
+        approval_status="approved",
+        current_stage_id=stage.id,
+        runtime_context={"max_stage_retries": 1},
+        stage_results=[
+            _stage_result(
+                stage,
+                status="failed",
+                next_action="retry",
+                error_type="missing_raw_segments",
+            )
+        ],
+    )
+
+    state = update_state(state)
+    state = route_after_stage(state)
+
+    assert state.status == "running"
+    assert state.retry_counts[stage.id] == 1
+    assert state.current_stage_id == stage.id
+
+    state.stage_results.append(
+        _stage_result(
+            stage,
+            status="failed",
+            next_action="retry",
+            error_type="missing_raw_segments",
+        )
+    )
+    state = update_state(state)
+    state = route_after_stage(state)
+
+    assert state.status == "failed"
+    assert state.plan is not None
+    assert state.plan.active_stages[0].status == "failed"
+    assert state.messages[-1]["type"] == "retry_limit_exceeded"
+
+
+def test_graph_all_stages_completed_routes_to_final_summary():
+    stage = _graph_stage("inspect_raw_date", effects="read")
+    state = _graph_state(
+        _graph_plan([stage]),
+        current_stage_id=stage.id,
+        stage_results=[_stage_result(stage)],
+    )
+
+    state = update_state(state)
+    state = route_after_stage(state)
+    state = final_summary(state)
+
+    assert state.status == "completed"
+    assert state.plan is not None
+    assert state.plan.status == "completed"
+    assert state.messages[-1]["type"] == "workflow_completed"

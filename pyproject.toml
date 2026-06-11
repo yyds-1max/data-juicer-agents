@@ -40,6 +40,9 @@ harness = [
     "py-data-juicer>=1.5.1",
     "PyYAML",
 ]
+vla_workflow = [
+    "langgraph>=0.2",
+]
 full = [
     "agentscope==1.0.14",
     "agentscope-runtime==1.0.5",
