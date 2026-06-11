@@ -26,11 +26,20 @@ export VLA_TRAJECTORY_ROOT=/media/heying/hy_data1/Trajectory_visualization/Objec
 export VLA_GT_DOG_ROOT=/media/heying/hy_data2/GT_dog
 export AGENT_DATA_PYTHON=/path/to/server/python3.8
 export AGENT_DATA_ENV_SETUP=/path/to/server/data_env_setup.sh
+export DASHSCOPE_API_KEY=/path-or-secret-managed-value
+# Optional: export DJA_OPENAI_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+# Optional: export DJA_VLA_PLAN_MODEL=qwen3-max-2026-01-23
+# Optional: export DJA_VLA_EXECUTOR_MODEL=qwen3-max-2026-01-23
 ```
 
 `AGENT_DATA_PYTHON` and `AGENT_DATA_ENV_SETUP` must be confirmed from the
 existing server run method. Do not downgrade Python or dependencies locally to
 make this pass.
+
+By default, `djx vla-workflow run` now uses real Plan-Agent and Executor-Agent
+ReAct instances. If the server acceptance must exercise the old deterministic
+path, pass `--agent-mode deterministic` explicitly or export
+`DJA_VLA_WORKFLOW_AGENT_MODE=deterministic`; do not rely on silent fallback.
 
 Preview:
 

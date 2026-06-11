@@ -330,6 +330,15 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Optional stable workflow run id",
     )
+    vla_run.add_argument(
+        "--agent-mode",
+        choices=["react", "deterministic", "react-with-deterministic-fallback"],
+        default="react",
+        help=(
+            "VLA workflow agent mode. Default uses real Plan-Agent/Executor-Agent "
+            "ReAct. deterministic and fallback modes must be selected explicitly."
+        ),
+    )
     vla_run.set_defaults(handler_name="vla-workflow")
 
     return parser

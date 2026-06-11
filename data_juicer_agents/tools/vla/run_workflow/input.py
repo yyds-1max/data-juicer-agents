@@ -13,6 +13,11 @@ class RunWorkflowInput(BaseModel):
     approve: bool = True
     dry_run: bool = False
     run_id: str | None = None
+    agent_mode: Literal[
+        "react",
+        "deterministic",
+        "react-with-deterministic-fallback",
+    ] = "react"
 
 
 class RunWorkflowOutput(BaseModel):

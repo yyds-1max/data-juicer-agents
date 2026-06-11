@@ -133,6 +133,7 @@ def test_vla_run_workflow_tool_dry_run_writes_planning_artifacts_without_stages(
             "dry_run": True,
             "approve": False,
             "run_id": "tool-dry-run",
+            "agent_mode": "deterministic",
         },
     )
 
@@ -175,6 +176,7 @@ def test_vla_run_workflow_tool_approve_executes_stage_loop_and_emits_progress(
             "scene_mode": "out",
             "approve": True,
             "run_id": "tool-execute-run",
+            "agent_mode": "deterministic",
         },
     )
 
@@ -213,6 +215,7 @@ def test_vla_run_workflow_tool_pauses_on_missing_manual_annotation_yaml(
             "scene_mode": "out",
             "approve": True,
             "run_id": "tool-paused-run",
+            "agent_mode": "deterministic",
         },
     )
 

@@ -186,6 +186,8 @@ def _run_cli_dry_run(
             "--dry-run",
             "--run-id",
             f"run-{date}",
+            "--agent-mode",
+            "deterministic",
         ]
     )
 

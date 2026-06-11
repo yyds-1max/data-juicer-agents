@@ -109,6 +109,8 @@ def test_vla_workflow_parser_accepts_run_command():
             "--dry-run",
             "--run-id",
             "run-test",
+            "--agent-mode",
+            "deterministic",
         ]
     )
 
@@ -120,6 +122,7 @@ def test_vla_workflow_parser_accepts_run_command():
     assert args.scene_mode == "out"
     assert args.dry_run is True
     assert args.run_id == "run-test"
+    assert args.agent_mode == "deterministic"
 
 
 def test_vla_workflow_dry_run_writes_planning_artifacts(
@@ -149,6 +152,8 @@ def test_vla_workflow_dry_run_writes_planning_artifacts(
             "--dry-run",
             "--run-id",
             "run-test",
+            "--agent-mode",
+            "deterministic",
         ]
     )
 
@@ -212,6 +217,8 @@ def test_vla_workflow_approve_executes_confirmed_stage_loop(
             "--approve",
             "--run-id",
             "run-execute-test",
+            "--agent-mode",
+            "deterministic",
         ]
     )
 

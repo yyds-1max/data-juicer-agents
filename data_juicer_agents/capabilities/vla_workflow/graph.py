@@ -36,7 +36,7 @@ from data_juicer_agents.capabilities.vla_workflow.profile.validate_navigation im
     validate_navigation_data_profile_model,
 )
 from data_juicer_agents.capabilities.vla_workflow.state import PlanAgentMemory
-from data_juicer_agents.core.tool import ToolContext
+from data_juicer_agents.core.tool import ToolContext, get_tool_spec
 
 ApprovalStatus = Literal["not_required", "pending", "approved", "rejected"]
 WorkflowStatus = Literal[
@@ -384,6 +384,8 @@ def executor_agent_execute_stage(
     registry: Any | None = None,
     catalog: Iterable[ToolCapability] | None = None,
     tool_context: ToolContext | None = None,
+    use_react: bool = False,
+    progress_callback: Any | None = None,
 ) -> VLAWorkflowState:
     updated = _as_state(state)
     if _confirmation_blocks_execution(updated):
@@ -409,17 +411,34 @@ def executor_agent_execute_stage(
         _add_message(updated, "executor_failed", reason="missing_data_profile")
         return updated
 
-    result = execute_stage(
-        plan=updated.plan,
-        current_stage=stage,
-        data_profile=updated.data_profile,
-        observations=updated.observations,
-        previous_stage_outputs=_previous_stage_outputs(updated),
-        runtime_context=_runtime_context(updated),
-        registry=registry,
-        catalog=catalog,
-        tool_context=tool_context,
-    )
+    if use_react:
+        from data_juicer_agents.capabilities.vla_workflow.react_agents import (
+            run_executor_agent_react,
+        )
+
+        result = run_executor_agent_react(
+            current_stage=stage,
+            data_profile=updated.data_profile,
+            observations=updated.observations,
+            previous_stage_outputs=_previous_stage_outputs(updated),
+            runtime_context=_runtime_context(updated),
+            tool_capability=_current_stage_capability(stage, catalog),
+            tool_spec=_get_tool_spec_for_stage(stage.tool, registry),
+            tool_context=tool_context or _tool_context_from_state(updated),
+            progress_callback=progress_callback,
+        )
+    else:
+        result = execute_stage(
+            plan=updated.plan,
+            current_stage=stage,
+            data_profile=updated.data_profile,
+            observations=updated.observations,
+            previous_stage_outputs=_previous_stage_outputs(updated),
+            runtime_context=_runtime_context(updated),
+            registry=registry,
+            catalog=catalog,
+            tool_context=tool_context,
+        )
     updated.stage_results.append(result)
     updated.route = "update_state"
     _add_message(
@@ -767,6 +786,34 @@ def _runtime_context(state: VLAWorkflowState) -> dict[str, Any]:
     context.setdefault("run_id", state.run_id)
     context.setdefault("log_dir", state.run_dir)
     return context
+
+
+def _current_stage_capability(
+    stage: VLAWorkflowStage,
+    catalog: Iterable[ToolCapability] | None,
+) -> ToolCapability | None:
+    for capability in catalog or []:
+        if capability.tool == stage.tool and capability.stage_kind == stage.stage_kind:
+            return capability
+    return None
+
+
+def _get_tool_spec_for_stage(tool_name: str, registry: Any | None) -> Any:
+    if registry is None:
+        return get_tool_spec(tool_name)
+    if hasattr(registry, "get"):
+        return registry.get(tool_name)
+    return registry[tool_name]
+
+
+def _tool_context_from_state(state: VLAWorkflowState) -> ToolContext:
+    context = _runtime_context(state)
+    return ToolContext(
+        working_dir=str(context.get("working_dir") or "./.djx"),
+        artifacts_dir=str(context.get("artifacts_dir") or "./.djx"),
+        env=dict(context.get("env") or {}),
+        runtime_values=dict(context.get("runtime_values") or {}),
+    )
 
 
 def _max_stage_retries(state: VLAWorkflowState) -> int:

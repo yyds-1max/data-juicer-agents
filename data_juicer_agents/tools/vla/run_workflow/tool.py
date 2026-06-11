@@ -42,7 +42,10 @@ VLA_RUN_WORKFLOW = ToolSpec(
         "this tool exactly once with parsed date, segments, scene_mode, "
         "approve, and dry_run. Ordinary 'process data' requests should use "
         "approve=true and dry_run=false; use dry_run=true only when the user "
-        "explicitly asks for preview/rehearsal/no execution."
+        "explicitly asks for preview/rehearsal/no execution. By default the "
+        "workflow uses real Plan-Agent and Executor-Agent ReAct agents. Use "
+        "agent_mode=deterministic or agent_mode=react-with-deterministic-fallback "
+        "only when explicitly requested; fallback is reported visibly."
     ),
     input_model=RunWorkflowInput,
     output_model=RunWorkflowOutput,

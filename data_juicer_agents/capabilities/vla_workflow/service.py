@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -58,6 +59,9 @@ from data_juicer_agents.tools.vla.inspect_rosbag_metadata.logic import (
 )
 
 STAGE_RESULTS_FILE = "stage_results.json"
+AGENT_MODE_REACT = "react"
+AGENT_MODE_DETERMINISTIC = "deterministic"
+AGENT_MODE_REACT_WITH_FALLBACK = "react-with-deterministic-fallback"
 
 
 @dataclass(frozen=True)
@@ -241,6 +245,7 @@ def _planning_state(
     *,
     tool_context: ToolContext | None,
     progress_callback: Callable[..., None] | None,
+    agent_mode: str,
 ) -> VLAWorkflowState:
     scenario = str(_get_param(params, "scenario", "") or "navigation_vla").strip()
     selected_segments = _segments_arg(_get_param(params, "segments", None))
@@ -270,6 +275,11 @@ def _planning_state(
         approval_status="approved" if _get_param(params, "approve", False) else "not_required",
     )
     state = initialize_state(state, tool_context=tool_context or _default_tool_context())
+    state.runtime_context["requested_agent_mode"] = agent_mode
+    state.runtime_context["agent_mode"] = (
+        AGENT_MODE_DETERMINISTIC if agent_mode == AGENT_MODE_DETERMINISTIC else AGENT_MODE_REACT
+    )
+    state.runtime_context["fallback_used"] = False
     _emit(
         progress_callback,
         "vla_workflow_started",
@@ -287,7 +297,29 @@ def _planning_state(
         summary="Plan-Agent: 正在生成导航 VLA 处理计划",
     )
 
-    if scenario == "navigation_vla":
+    if agent_mode != AGENT_MODE_DETERMINISTIC:
+        return _react_planning_state(
+            state,
+            tool_context=tool_context or _default_tool_context(),
+            progress_callback=progress_callback,
+        )
+
+    return _deterministic_planning_state(
+        state,
+        user_inputs=user_inputs,
+        paths=paths,
+        progress_callback=progress_callback,
+    )
+
+
+def _deterministic_planning_state(
+    state: VLAWorkflowState,
+    *,
+    user_inputs: dict[str, Any],
+    paths: VLAPaths,
+    progress_callback: Callable[..., None] | None,
+) -> VLAWorkflowState:
+    if state.scenario == "navigation_vla":
         state.observations = _navigation_observations(
             user_inputs=user_inputs,
             paths=paths,
@@ -300,6 +332,52 @@ def _planning_state(
     state = plan_agent_inspect_loop(state)
     state = save_observations(state)
     state = plan_agent_fill_data_profile(state)
+    state = validate_data_profile(state)
+    if state.status == "failed":
+        return state
+    state = generate_workflow_plan(state)
+    state = validate_plan_node(state)
+    if state.status == "failed":
+        return state
+    state = ask_confirmation(state)
+    _emit(
+        progress_callback,
+        "vla_plan_completed",
+        run_id=state.run_id,
+        run_dir=state.run_dir,
+        status=state.status,
+        summary=_plan_completed_summary(state),
+        plan_id=state.plan.plan_id if state.plan is not None else None,
+    )
+    return state
+
+
+def _react_planning_state(
+    state: VLAWorkflowState,
+    *,
+    tool_context: ToolContext,
+    progress_callback: Callable[..., None] | None,
+) -> VLAWorkflowState:
+    from data_juicer_agents.capabilities.vla_workflow.react_agents import (
+        run_plan_agent_react,
+    )
+
+    state = plan_agent_read_docs(state)
+    state = save_planning_notes(state)
+    result = run_plan_agent_react(
+        user_request=state.user_request,
+        scenario=state.scenario or "navigation_vla",
+        user_inputs=state.user_inputs,
+        planning_notes=state.plan_agent_memory.planning_notes,
+        source_docs=state.plan_agent_memory.source_docs,
+        tool_context=tool_context,
+        progress_callback=progress_callback,
+    )
+    state.plan_agent_memory = result["memory"]
+    state.observations = list(result["observations"])
+    state.data_profile = result["data_profile"]
+    state.plan = result["plan"]
+    state = save_observations(state)
     state = validate_data_profile(state)
     if state.status == "failed":
         return state
@@ -389,6 +467,37 @@ def _execution_context(state: VLAWorkflowState, *, dry_run: bool) -> dict[str, A
     return context
 
 
+def _requested_agent_mode(params: Any) -> str:
+    mode = str(
+        _get_param(
+            params,
+            "agent_mode",
+            None,
+        )
+        or _env_agent_mode()
+        or AGENT_MODE_REACT
+    ).strip()
+    if mode not in {
+        AGENT_MODE_REACT,
+        AGENT_MODE_DETERMINISTIC,
+        AGENT_MODE_REACT_WITH_FALLBACK,
+    }:
+        raise ValueError(f"unsupported VLA workflow agent_mode: {mode}")
+    return mode
+
+
+def _env_agent_mode() -> str:
+    return os.environ.get("DJA_VLA_WORKFLOW_AGENT_MODE", "")
+
+
+def _is_react_failure(exc: Exception) -> bool:
+    from data_juicer_agents.capabilities.vla_workflow.react_agents import (
+        VLAReActAgentUnavailable,
+    )
+
+    return isinstance(exc, VLAReActAgentUnavailable)
+
+
 def _persist_execution_artifacts(state: VLAWorkflowState) -> None:
     if not state.run_dir:
         return
@@ -406,6 +515,8 @@ def _execute_confirmed_workflow(
     state: VLAWorkflowState,
     *,
     progress_callback: Callable[..., None] | None,
+    tool_context: ToolContext | None = None,
+    use_react: bool = False,
 ) -> VLAWorkflowState:
     updated = state.model_copy(deep=True)
     updated.runtime_context = _execution_context(updated, dry_run=False)
@@ -428,7 +539,12 @@ def _execute_confirmed_workflow(
             summary=f"Executor-Agent: {stage.get('stage_id') or 'stage'} 开始",
         )
 
-        updated = executor_agent_execute_stage(updated)
+        updated = executor_agent_execute_stage(
+            updated,
+            tool_context=tool_context,
+            use_react=use_react,
+            progress_callback=progress_callback,
+        )
         latest = updated.stage_results[-1] if updated.stage_results else None
         updated = update_state(updated)
         updated = route_after_stage(updated)
@@ -471,21 +587,87 @@ def execute_vla_workflow(
     progress_callback: Callable[..., None] | None = None,
 ) -> VLAWorkflowRunResult:
     try:
-        state = _planning_state(
-            params,
-            tool_context=tool_context,
-            progress_callback=progress_callback,
-        )
-    except Exception as exc:
+        requested_agent_mode = _requested_agent_mode(params)
+    except ValueError as exc:
         return VLAWorkflowRunResult(
             exit_code=2,
             payload={
                 "ok": False,
                 "action": "vla_workflow_run",
-                "error_type": "workflow_failed",
+                "agent_mode": AGENT_MODE_REACT,
+                "requested_agent_mode": None,
+                "fallback_used": False,
+                "error_type": "invalid_agent_mode",
                 "message": str(exc),
             },
         )
+    active_agent_mode = (
+        AGENT_MODE_DETERMINISTIC
+        if requested_agent_mode == AGENT_MODE_DETERMINISTIC
+        else AGENT_MODE_REACT
+    )
+    fallback_used = False
+    fallback_reason = ""
+    try:
+        state = _planning_state(
+            params,
+            tool_context=tool_context,
+            progress_callback=progress_callback,
+            agent_mode=requested_agent_mode,
+        )
+    except Exception as exc:
+        if requested_agent_mode == AGENT_MODE_REACT_WITH_FALLBACK and _is_react_failure(exc):
+            fallback_used = True
+            fallback_reason = str(exc)
+            active_agent_mode = AGENT_MODE_DETERMINISTIC
+            state = _planning_state(
+                params,
+                tool_context=tool_context,
+                progress_callback=progress_callback,
+                agent_mode=AGENT_MODE_DETERMINISTIC,
+            )
+            state.runtime_context["requested_agent_mode"] = requested_agent_mode
+            state.runtime_context["agent_mode"] = AGENT_MODE_DETERMINISTIC
+            state.runtime_context["fallback_used"] = True
+            state.runtime_context["fallback_reason"] = fallback_reason
+            state.messages.append(
+                {
+                    "type": "react_agent_fallback",
+                    "reason": fallback_reason,
+                    "agent_mode": AGENT_MODE_DETERMINISTIC,
+                    "requested_agent_mode": requested_agent_mode,
+                }
+            )
+        elif _is_react_failure(exc):
+            return VLAWorkflowRunResult(
+                exit_code=2,
+                payload={
+                    "ok": False,
+                    "action": "vla_workflow_run",
+                    "agent_mode": AGENT_MODE_REACT,
+                    "requested_agent_mode": requested_agent_mode,
+                    "fallback_used": False,
+                    "error_type": "react_agent_unavailable",
+                    "message": (
+                        f"{exc}; deterministic fallback is disabled. "
+                        "Set agent_mode='react-with-deterministic-fallback' or "
+                        "agent_mode='deterministic' to use the deterministic workflow."
+                    ),
+                },
+            )
+        else:
+            return VLAWorkflowRunResult(
+                exit_code=2,
+                payload={
+                    "ok": False,
+                    "action": "vla_workflow_run",
+                    "agent_mode": active_agent_mode,
+                    "requested_agent_mode": requested_agent_mode,
+                    "fallback_used": fallback_used,
+                    "error_type": "workflow_failed",
+                    "message": str(exc),
+                },
+            )
 
     dry_run = bool(_get_param(params, "dry_run", False))
     if dry_run:
@@ -494,19 +676,68 @@ def execute_vla_workflow(
         exit_code = 3
     else:
         if _get_param(params, "approve", False) and state.status == "running":
-            state = _execute_confirmed_workflow(
-                state,
-                progress_callback=progress_callback,
-            )
+            use_react_execution = state.runtime_context.get("agent_mode") == AGENT_MODE_REACT
+            try:
+                state = _execute_confirmed_workflow(
+                    state,
+                    progress_callback=progress_callback,
+                    tool_context=tool_context,
+                    use_react=use_react_execution,
+                )
+            except Exception as exc:
+                if (
+                    requested_agent_mode == AGENT_MODE_REACT_WITH_FALLBACK
+                    and use_react_execution
+                    and _is_react_failure(exc)
+                ):
+                    fallback_used = True
+                    fallback_reason = str(exc)
+                    state.runtime_context["agent_mode"] = AGENT_MODE_DETERMINISTIC
+                    state.runtime_context["fallback_used"] = True
+                    state.runtime_context["fallback_reason"] = fallback_reason
+                    state.messages.append(
+                        {
+                            "type": "react_agent_fallback",
+                            "reason": fallback_reason,
+                            "agent_mode": AGENT_MODE_DETERMINISTIC,
+                            "requested_agent_mode": requested_agent_mode,
+                        }
+                    )
+                    state = _execute_confirmed_workflow(
+                        state,
+                        progress_callback=progress_callback,
+                        tool_context=tool_context,
+                        use_react=False,
+                    )
+                elif use_react_execution and _is_react_failure(exc):
+                    state.status = "failed"
+                    state.messages.append(
+                        {
+                            "type": "react_agent_unavailable",
+                            "reason": str(exc),
+                        }
+                    )
+                else:
+                    raise
         exit_code = 0 if state.status != "failed" else 2
 
     payload = _payload(state, dry_run=dry_run, exit_code=exit_code)
+    payload["agent_mode"] = state.runtime_context.get("agent_mode", active_agent_mode)
+    payload["requested_agent_mode"] = state.runtime_context.get(
+        "requested_agent_mode",
+        requested_agent_mode,
+    )
+    payload["fallback_used"] = bool(state.runtime_context.get("fallback_used", fallback_used))
+    if state.runtime_context.get("fallback_reason") or fallback_reason:
+        payload["fallback_reason"] = str(
+            state.runtime_context.get("fallback_reason") or fallback_reason
+        )
     if exit_code == 3:
         payload["error_type"] = "approval_required"
         payload["message"] = "workflow plan requires approve before execution"
     elif state.status == "failed":
         payload["error_type"] = "workflow_failed"
-        payload["message"] = "workflow planning failed"
+        payload["message"] = "workflow failed"
 
     _emit_final_event(progress_callback, state, exit_code=exit_code)
     return VLAWorkflowRunResult(exit_code=exit_code, payload=payload)
@@ -575,24 +806,30 @@ def _progress_summary(state: VLAWorkflowState) -> str:
 
 
 def _user_message(state: VLAWorkflowState) -> str:
+    prefix = ""
+    if state.runtime_context.get("fallback_used"):
+        prefix = (
+            "Warning: real VLA ReAct agent was unavailable; deterministic fallback "
+            f"was used. reason={state.runtime_context.get('fallback_reason')}. "
+        )
     if state.status == "completed":
-        return (
+        return prefix + (
             f"VLA workflow completed: run_id={state.run_id}, "
             f"stages={len(state.stage_results)}, run_dir={state.run_dir}"
         )
     if state.status == "paused":
-        return (
+        return prefix + (
             f"VLA workflow paused at {state.current_stage_id}; "
             f"run_id={state.run_id}, run_dir={state.run_dir}"
         )
     if state.status == "awaiting_confirmation":
-        return (
+        return prefix + (
             f"VLA workflow plan is awaiting confirmation: run_id={state.run_id}, "
             f"run_dir={state.run_dir}"
         )
     if state.status == "failed":
-        return f"VLA workflow failed: run_id={state.run_id}, run_dir={state.run_dir}"
-    return f"VLA workflow status={state.status}: run_id={state.run_id}, run_dir={state.run_dir}"
+        return prefix + f"VLA workflow failed: run_id={state.run_id}, run_dir={state.run_dir}"
+    return prefix + f"VLA workflow status={state.status}: run_id={state.run_id}, run_dir={state.run_dir}"
 
 
 __all__ = [
