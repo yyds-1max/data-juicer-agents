@@ -16,6 +16,7 @@ from .plan_agent import (
     deterministic_plan_vla_workflow,
     generate_navigation_workflow_plan,
 )
+from .executor_agent import VLAStageResult, bind_stage_tool_args, execute_stage
 from .plan import SkippedStage, VLAWorkflowPlan, VLAWorkflowStage, validate_plan
 from .state import PlanAgentMemory
 from .templates import (
@@ -37,6 +38,8 @@ __all__ = [
     "build_planning_notes",
     "build_workflow_run_dir",
     "deterministic_plan_vla_workflow",
+    "bind_stage_tool_args",
+    "execute_stage",
     "generate_navigation_workflow_plan",
     "get_manipulation_template",
     "get_navigation_template",
@@ -47,4 +50,5 @@ __all__ = [
     "save_planning_notes",
     "save_workflow_plan",
     "validate_plan",
+    "VLAStageResult",
 ]
