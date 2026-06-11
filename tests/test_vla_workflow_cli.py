@@ -5,7 +5,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from pydantic import BaseModel, ConfigDict
+
 from data_juicer_agents.cli import build_parser, main
+from data_juicer_agents.core.tool import ToolContext, ToolResult, ToolSpec
+
+
+class AnyInput(BaseModel):
+    model_config = ConfigDict(extra="allow")
 
 
 def _write_metadata(path: Path) -> None:
@@ -62,6 +69,26 @@ def _build_fake_navigation_roots(tmp_path: Path) -> dict[str, Path]:
         "finish_root": finish_root,
         "trajectory_root": trajectory_root,
     }
+
+
+def _fake_success_spec(name: str, calls: list[tuple[str, dict]]) -> ToolSpec:
+    def _execute(ctx: ToolContext, args: BaseModel) -> ToolResult:
+        payload = args.model_dump()
+        calls.append((name, payload))
+        data = {"ok": True, "tool": name}
+        if name == "vla_run_manual_box_annotation":
+            data["yaml_paths"] = ["fake.yaml"]
+        return ToolResult.success(summary=f"{name} ok", data=data)
+
+    return ToolSpec(
+        name=name,
+        description=f"fake {name}",
+        input_model=AnyInput,
+        output_model=None,
+        executor=_execute,
+        tags=("vla",),
+        effects="execute",
+    )
 
 
 def test_vla_workflow_parser_accepts_run_command():
@@ -146,6 +173,60 @@ def test_vla_workflow_dry_run_writes_planning_artifacts(
         assert Path(artifacts[key]).is_file()
 
     assert any(item["type"] == "approval_required" for item in payload["messages"])
+
+
+def test_vla_workflow_approve_executes_confirmed_stage_loop(
+    monkeypatch,
+    tmp_path: Path,
+    capsys,
+):
+    roots = _build_fake_navigation_roots(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("VLA_RAW_ROOT", str(roots["raw_root"]))
+    monkeypatch.setenv("VLA_CLIP_ROOT", str(roots["clip_root"]))
+    monkeypatch.setenv("VLA_FINISH_ROOT", str(roots["finish_root"]))
+    monkeypatch.setenv("VLA_TRAJECTORY_ROOT", str(roots["trajectory_root"]))
+
+    calls: list[tuple[str, dict]] = []
+
+    def _get_fake_spec(name: str) -> ToolSpec:
+        return _fake_success_spec(name, calls)
+
+    monkeypatch.setattr(
+        "data_juicer_agents.capabilities.vla_workflow.executor_agent.get_tool_spec",
+        _get_fake_spec,
+    )
+
+    code = main(
+        [
+            "vla-workflow",
+            "run",
+            "--scenario",
+            "navigation_vla",
+            "--date",
+            "20270515",
+            "--segments",
+            "all",
+            "--scene-mode",
+            "out",
+            "--approve",
+            "--run-id",
+            "run-execute-test",
+        ]
+    )
+
+    assert code == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["dry_run"] is False
+    assert payload["status"] == "completed"
+    assert payload["stage_result_count"] == len(calls)
+    assert any(item["type"] == "stage_executed" for item in payload["messages"])
+    assert calls[0][0] == "vla_inspect_raw_date"
+    assert all(call_args.get("dry_run") is False for _, call_args in calls if "dry_run" in call_args)
+
+    result_path = Path(payload["artifacts"]["stage_results"])
+    assert result_path.is_file()
 
 
 def test_session_prompt_prefers_vla_workflow_for_complex_navigation_requests():

@@ -10,13 +10,18 @@ from typing import Any
 from data_juicer_agents.capabilities.vla_workflow.graph import (
     VLAWorkflowState,
     ask_confirmation,
+    executor_agent_execute_stage,
+    final_summary,
     generate_workflow_plan,
     initialize_state,
     plan_agent_fill_data_profile,
     plan_agent_inspect_loop,
     plan_agent_read_docs,
+    route_after_stage,
     save_observations,
     save_planning_notes,
+    select_next_stage,
+    update_state,
     validate_data_profile,
     validate_plan_node,
 )
@@ -25,6 +30,7 @@ from data_juicer_agents.capabilities.vla_workflow.persistence import (
     OBSERVATIONS_FILE,
     PLAN_FILE,
     PLANNING_NOTES_FILE,
+    save_workflow_plan,
 )
 from data_juicer_agents.capabilities.vla_workflow.plan_agent import build_observation
 from data_juicer_agents.core.tool import ToolContext
@@ -49,6 +55,8 @@ from data_juicer_agents.tools.vla.inspect_raw_layout.logic import inspect_raw_la
 from data_juicer_agents.tools.vla.inspect_rosbag_metadata.logic import (
     inspect_rosbag_metadata,
 )
+
+STAGE_RESULTS_FILE = "stage_results.json"
 
 
 def _emit_json(payload: dict[str, Any]) -> None:
@@ -261,6 +269,7 @@ def _artifact_paths(state: VLAWorkflowState) -> dict[str, str]:
         "observations": str(run_dir / OBSERVATIONS_FILE),
         "data_profile": str(run_dir / DATA_PROFILE_FILE),
         "plan": str(run_dir / PLAN_FILE),
+        "stage_results": str(run_dir / STAGE_RESULTS_FILE),
     }
 
 
@@ -279,9 +288,84 @@ def _payload(state: VLAWorkflowState, *, dry_run: bool, exit_code: int) -> dict[
         "approval_required": bool(plan.approval_required) if plan is not None else False,
         "plan_id": plan.plan_id if plan is not None else None,
         "active_stage_count": len(plan.active_stages) if plan is not None else 0,
+        "stage_result_count": len(state.stage_results),
+        "current_stage_id": state.current_stage_id,
         "artifacts": _artifact_paths(state),
         "messages": state.messages,
     }
+
+
+def _execution_context(state: VLAWorkflowState, *, dry_run: bool) -> dict[str, Any]:
+    user_inputs = state.user_inputs
+    date = str(user_inputs.get("date") or "").strip()
+    finish_root = Path(str(user_inputs.get("finish_root") or VLAPaths().finish_root))
+    save_path = str(finish_root / date)
+    save_path_temp = str(finish_root / f"{date}_temp")
+
+    context = dict(state.runtime_context)
+    context["dry_run"] = bool(dry_run)
+    context.setdefault("run_id", state.run_id)
+    context.setdefault("log_dir", state.run_dir)
+    context.setdefault("working_dir", "./.djx")
+    context.setdefault("artifacts_dir", "./.djx")
+
+    stage_args = dict(context.get("stage_args") or {})
+    for stage_kind in (
+        "build_noobscenes_inputs",
+        "manual_box_annotation",
+        "run_tracking",
+    ):
+        args = dict(stage_args.get(stage_kind) or {})
+        args.setdefault("save_path_temp", save_path_temp)
+        stage_args[stage_kind] = args
+
+    projection_args = dict(stage_args.get("projection_and_trajectory") or {})
+    projection_args.setdefault("save_path", save_path)
+    projection_args.setdefault("save_path_temp", save_path_temp)
+    stage_args["projection_and_trajectory"] = projection_args
+
+    context["stage_args"] = stage_args
+    return context
+
+
+def _persist_execution_artifacts(state: VLAWorkflowState) -> None:
+    if not state.run_dir:
+        return
+    run_dir = Path(state.run_dir).expanduser()
+    if state.plan is not None:
+        save_workflow_plan(run_dir, state.plan.model_dump())
+    stage_results = [result.model_dump() for result in state.stage_results]
+    (run_dir / STAGE_RESULTS_FILE).write_text(
+        json.dumps(stage_results, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _execute_confirmed_workflow(state: VLAWorkflowState) -> VLAWorkflowState:
+    updated = state.model_copy(deep=True)
+    updated.runtime_context = _execution_context(updated, dry_run=False)
+
+    while updated.status == "running":
+        updated = select_next_stage(updated)
+        if updated.route == "final_summary":
+            updated = final_summary(updated)
+            _persist_execution_artifacts(updated)
+            return updated
+
+        updated = executor_agent_execute_stage(updated)
+        updated = update_state(updated)
+        updated = route_after_stage(updated)
+        _persist_execution_artifacts(updated)
+
+        if updated.route == "final_summary":
+            updated = final_summary(updated)
+            _persist_execution_artifacts(updated)
+            return updated
+        if updated.route in {"paused", "failed", "plan_agent_read_docs"}:
+            return updated
+
+    _persist_execution_artifacts(updated)
+    return updated
 
 
 def run_vla_workflow(args: Any) -> int:
@@ -316,6 +400,8 @@ def run_vla_workflow(args: Any) -> int:
     elif state.status == "awaiting_confirmation" and not getattr(args, "approve", False):
         exit_code = 3
     else:
+        if getattr(args, "approve", False) and state.status == "running":
+            state = _execute_confirmed_workflow(state)
         exit_code = 0 if state.status != "failed" else 2
 
     payload = _payload(state, dry_run=dry_run, exit_code=exit_code)

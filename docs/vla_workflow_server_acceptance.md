@@ -164,8 +164,8 @@ Before syncing to the server, run:
 ./.venv/bin/pytest tests/test_vla_workflow_dry_run_acceptance.py tests/test_vla_workflow_executor.py tests/test_vla_workflow_state_routing.py -v
 ```
 
-Current CLI note: `djx vla-workflow run --approve` must be verified on the
-server by checking stage results, tool logs, and final artifacts. If the payload
-only reports planning or confirmation state and no stage result/log is written,
-the CLI executor loop still needs to be wired before treating Step 4 or Step 6
-as a real execution pass.
+Execution check: `djx vla-workflow run --approve` should emit `stage_executed`
+messages after `approval_accepted`, and the run directory should contain
+`stage_results.json`. If the payload only reports planning or confirmation state
+and no stage result/log is written, stop the server acceptance run and inspect
+the CLI executor loop before treating Step 4 or Step 6 as a real execution pass.
