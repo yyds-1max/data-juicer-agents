@@ -42,6 +42,12 @@ _COMMAND_HANDLER_SPECS = {
         "feature": "djx tool",
         "extras": ("harness", "core"),
     },
+    "vla-workflow": {
+        "module": "data_juicer_agents.commands.vla_workflow_cmd",
+        "handler": "run_vla_workflow",
+        "feature": "djx vla-workflow",
+        "extras": ("core",),
+    },
 }
 
 
@@ -280,6 +286,51 @@ def build_parser() -> argparse.ArgumentParser:
         help="Explicitly confirm running write/execute tools",
     )
     tool_run.set_defaults(handler_name="tool")
+
+    vla_workflow = sub.add_parser(
+        "vla-workflow",
+        help="Run structured multi-scene VLA workflow orchestration",
+        parents=[output_parent],
+    )
+    vla_sub = vla_workflow.add_subparsers(dest="vla_workflow_action", required=True)
+    vla_run = vla_sub.add_parser(
+        "run",
+        help="Plan or run a VLA workflow",
+        parents=[output_parent],
+    )
+    vla_run.add_argument(
+        "--scenario",
+        default="navigation_vla",
+        help="VLA workflow scenario (default: navigation_vla)",
+    )
+    vla_run.add_argument("--date", required=True, help="Server dataset date, e.g. 20270515")
+    vla_run.add_argument(
+        "--segments",
+        default="all",
+        help="`all` or comma-separated segment names",
+    )
+    vla_run.add_argument(
+        "--scene-mode",
+        choices=["in", "out"],
+        default="out",
+        help="Navigation scene mode",
+    )
+    vla_run.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Write planning artifacts and stop before execution",
+    )
+    vla_run.add_argument(
+        "--approve",
+        action="store_true",
+        help="Approve executing write/execute/external workflow stages",
+    )
+    vla_run.add_argument(
+        "--run-id",
+        default=None,
+        help="Optional stable workflow run id",
+    )
+    vla_run.set_defaults(handler_name="vla-workflow")
 
     return parser
 

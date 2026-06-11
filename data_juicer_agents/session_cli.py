@@ -17,7 +17,10 @@ from data_juicer_agents.utils.optional_deps import missing_dependency_message
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="dj-agents",
-        description="ReAct conversational entry for DJX atomic capabilities (LLM required)",
+        description=(
+            "ReAct conversational entry for DJX atomic capabilities (LLM required). "
+            "For complex navigation VLA workflows, prefer `djx vla-workflow run`."
+        ),
     )
     parser.add_argument(
         "--verbose",

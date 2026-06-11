@@ -308,6 +308,12 @@ def ask_confirmation(
         updated.status = "failed"
         _add_message(updated, "approval_failed", reason="missing_plan")
         return updated
+    if updated.plan.status == "failed":
+        updated.status = "failed"
+        updated.approval_status = "not_required"
+        updated.route = "failed"
+        _add_message(updated, "approval_skipped", reason="plan_failed")
+        return updated
 
     stage_ids = _approval_stage_ids(updated.plan)
     if not stage_ids:

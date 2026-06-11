@@ -27,7 +27,9 @@ _HELP_TEXT = (
     "- I want a cleaning plan for data/demo-dataset.jsonl\n"
     "- Retrieve candidate operators for deduplication and filtering\n"
     "- Existing operators do not satisfy this requirement. Help me generate a new operator\n"
+    "- Run the structured VLA workflow dry-run for navigation data date 20270515\n"
     "Available atomic capabilities: retrieve / plan(core tools) / apply / dev.\n"
+    "For complex navigation VLA data processing, prefer djx vla-workflow run.\n"
     "Control commands: help / exit / cancel."
 )
 
@@ -257,6 +259,9 @@ class DJSessionAgent:
             "Infer the user's likely next intent and end with a proactive suggestion in this style: "
             "'If you want ..., tell me ..., and I will ...'.\n"
             "For VLA / dog / odom / ROS2 db3 data processing requests, use the VLA tools instead of generic shell execution. "
+            "complex navigation VLA data processing should use vla_workflow capability first. "
+            "legacy single ReAct VLA tool chain is only for manual recovery, targeted inspection, or single-tool execution. "
+            "A suitable CLI entry is: djx vla-workflow run --scenario navigation_vla --date <YYYYMMDD> --segments all --scene-mode out --dry-run. "
             "For those requests, structured VLA tools may operate on configured VLA roots "
             "(raw_root, clip_root, finish_root, trajectory_root) even when those roots are outside the current working directory; "
             "generic shell and file tools remain limited to the current working directory. "
