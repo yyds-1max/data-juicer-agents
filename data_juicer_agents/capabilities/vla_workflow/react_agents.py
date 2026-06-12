@@ -8,6 +8,8 @@ import inspect
 import threading
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Callable
 
 from pydantic import ValidationError
@@ -23,6 +25,7 @@ from data_juicer_agents.capabilities.vla_workflow.catalog.service import (
 from data_juicer_agents.capabilities.vla_workflow.executor_agent import VLAStageResult
 from data_juicer_agents.capabilities.vla_workflow.plan.model import VLAWorkflowPlan
 from data_juicer_agents.capabilities.vla_workflow.plan.validate import validate_plan
+from data_juicer_agents.capabilities.vla_workflow.persistence import PLAN_AGENT_STEPS_FILE
 from data_juicer_agents.capabilities.vla_workflow.plan_agent import (
     build_observation,
 )
@@ -84,6 +87,7 @@ def run_plan_agent_react(
     tool_context: ToolContext,
     progress_callback: Callable[..., None] | None = None,
     catalog: Iterable[ToolCapability] | None = None,
+    run_dir: str | Path | None = None,
 ) -> dict[str, Any]:
     collected_observations: list[dict[str, Any]] = []
     resolved_catalog = list(catalog) if catalog is not None else list_tool_capabilities(
@@ -111,23 +115,56 @@ def run_plan_agent_react(
     )
 
     for attempt in range(_MAX_PLAN_REPAIR_ATTEMPTS + 1):
-        reply_text = _run_agent(
-            agent,
-            _plan_agent_input_payload(
-                user_request=user_request,
-                scenario=scenario,
-                user_inputs=user_inputs,
-                source_docs=source_docs,
-                planning_notes=memory.planning_notes,
-                catalog=resolved_catalog,
-                observations=observations,
-                profile_draft=profile_draft,
-                plan_draft=plan_draft,
-                validation_feedback=validation_feedback,
-                repair_attempt=attempt,
-            ),
+        remaining_repair_attempts = max(_MAX_PLAN_REPAIR_ATTEMPTS - attempt, 0)
+        input_payload = _plan_agent_input_payload(
+            user_request=user_request,
+            scenario=scenario,
+            user_inputs=user_inputs,
+            source_docs=source_docs,
+            planning_notes=memory.planning_notes,
+            catalog=resolved_catalog,
+            observations=observations,
+            profile_draft=profile_draft,
+            plan_draft=plan_draft,
+            validation_feedback=validation_feedback,
+            repair_attempt=attempt,
         )
-        payload = _parse_json_object(reply_text)
+        try:
+            reply_text = _run_agent(agent, input_payload)
+        except VLAReActAgentUnavailable as exc:
+            _append_plan_agent_step(
+                run_dir,
+                event="agent_call_failed",
+                attempt=attempt,
+                remaining_repair_attempts=remaining_repair_attempts,
+                error_type="agent_call_failed",
+                message=str(exc),
+            )
+            raise
+        _append_plan_agent_step(
+            run_dir,
+            event="llm_reply",
+            attempt=attempt,
+            remaining_repair_attempts=remaining_repair_attempts,
+            reply_text=reply_text,
+        )
+        try:
+            payload = _parse_json_object(reply_text)
+        except VLAReActAgentUnavailable as exc:
+            cause = exc.__cause__
+            _append_plan_agent_step(
+                run_dir,
+                event="parse_failed",
+                attempt=attempt,
+                remaining_repair_attempts=remaining_repair_attempts,
+                error_type=(
+                    "json_decode_error"
+                    if isinstance(cause, json.JSONDecodeError)
+                    else "invalid_json_response"
+                ),
+                message=str(exc),
+            )
+            raise
         observations = _observations_from_payload(payload, collected_observations)
         profile_draft = dict(payload.get("data_profile") or profile_draft)
         plan_draft = dict(payload.get("plan") or plan_draft)
@@ -147,6 +184,14 @@ def run_plan_agent_react(
         )
         if validation["ok"]:
             memory.ready_to_plan = True
+            _append_plan_agent_step(
+                run_dir,
+                event="validation_passed",
+                attempt=attempt,
+                remaining_repair_attempts=remaining_repair_attempts,
+                observation_count=len(observations),
+                plan_id=validation["plan"].plan_id,
+            )
             return {
                 "memory": memory,
                 "planning_notes": memory.planning_notes,
@@ -154,7 +199,14 @@ def run_plan_agent_react(
                 "data_profile": validation["data_profile"],
                 "plan": validation["plan"],
             }
-        validation_feedback = validation
+        validation_feedback = _validation_feedback_payload(validation)
+        _append_plan_agent_step(
+            run_dir,
+            event="validation_failed",
+            attempt=attempt,
+            remaining_repair_attempts=remaining_repair_attempts,
+            validation_feedback=validation_feedback,
+        )
 
     raise VLAReActPlanValidationError(
         (
@@ -166,6 +218,34 @@ def run_plan_agent_react(
         observations=observations,
         validation_feedback=validation_feedback,
     )
+
+
+def _validation_feedback_payload(validation: Mapping[str, Any] | None) -> dict[str, Any]:
+    data = dict(validation or {})
+    return {
+        "ok": bool(data.get("ok", False)),
+        "errors": list(data.get("errors") or []),
+        "warnings": list(data.get("warnings") or []),
+    }
+
+
+def _append_plan_agent_step(
+    run_dir: str | Path | None,
+    *,
+    event: str,
+    **payload: Any,
+) -> None:
+    if run_dir is None:
+        return
+    path = Path(run_dir).expanduser() / PLAN_AGENT_STEPS_FILE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    record = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "event": event,
+    }
+    record.update(payload)
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(_plain(record), ensure_ascii=False) + "\n")
 
 
 def run_executor_agent_react(
@@ -416,7 +496,7 @@ def _plan_agent_input_payload(
         "plan_schema": VLAWorkflowPlan.model_json_schema(),
         "profile_draft": dict(profile_draft),
         "plan_draft": dict(plan_draft),
-        "validation_feedback": dict(validation_feedback or {}),
+        "validation_feedback": _validation_feedback_payload(validation_feedback),
         "repair_attempt": repair_attempt,
         "remaining_repair_attempts": max(_MAX_PLAN_REPAIR_ATTEMPTS - repair_attempt, 0),
         "required_output_schema": {

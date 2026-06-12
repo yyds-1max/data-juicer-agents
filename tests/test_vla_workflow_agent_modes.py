@@ -344,13 +344,232 @@ def test_react_plan_agent_records_validation_failure_after_three_repairs(
     )
 
     observations_path = Path(result.payload["artifacts"]["observations"])
+    plan_agent_steps_path = (
+        tmp_path
+        / "vla_workflow_runs"
+        / "20270515"
+        / "react-validation-failure"
+        / "plan_agent_steps.jsonl"
+    )
     assert result.exit_code == 2
     assert result.payload["status"] == "failed"
     assert observations_path.is_file()
     assert json.loads(observations_path.read_text(encoding="utf-8")) == [observation]
+    step_records = [
+        json.loads(line)
+        for line in plan_agent_steps_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert [record["event"] for record in step_records] == [
+        "llm_reply",
+        "validation_failed",
+        "llm_reply",
+        "validation_failed",
+        "llm_reply",
+        "validation_failed",
+        "llm_reply",
+        "validation_failed",
+    ]
+    assert step_records[0]["attempt"] == 0
+    assert step_records[-1]["remaining_repair_attempts"] == 0
+    assert step_records[0]["reply_text"] == json.dumps(invalid_payload)
+    assert step_records[1]["validation_feedback"]["errors"]
     assert len(calls) == 4
     assert calls[-1]["remaining_repair_attempts"] == 0
     assert any(
         message["type"] == "plan_agent_validation_failed"
         for message in result.payload["messages"]
     )
+
+
+def test_react_plan_agent_feedback_is_json_serializable_for_semantic_errors(
+    monkeypatch,
+    tmp_path: Path,
+):
+    observations = [
+        build_observation(
+            observation_id="obs_raw_layout",
+            tool="vla_inspect_raw_layout",
+            raw_result={
+                "ok": True,
+                "date": "20270515",
+                "raw_root": "/media/heying/hy_data1/VLADatasets/raw_data",
+                "raw_date_dir": "/media/heying/hy_data1/VLADatasets/raw_data/20270515",
+                "raw_temp_dir": "/media/heying/hy_data1/VLADatasets/raw_data/20270515_temp",
+                "segments": [
+                    {
+                        "name": "20260515_102948",
+                        "path": "/media/heying/hy_data1/VLADatasets/raw_data/20270515/20260515_102948",
+                        "has_db3": True,
+                        "has_metadata_yaml": True,
+                    }
+                ],
+            },
+        ),
+        build_observation(
+            observation_id="obs_topic_schema",
+            tool="vla_classify_navigation_topic_schema",
+            raw_result={
+                "ok": True,
+                "topic_schema": "u_legacy_topics",
+                "topic_mapping_variant": "u_legacy_topics",
+                "required_roles_present": True,
+                "missing_required_roles": [],
+                "topics": [
+                    {
+                        "name": "/lidar_points",
+                        "type": "sensor_msgs/msg/PointCloud2",
+                        "role": "lidar",
+                        "canonical_dir": "r32_rslidar_points",
+                    },
+                    {
+                        "name": "/cam_video5/csi_cam/image_raw/compressed",
+                        "type": "sensor_msgs/msg/CompressedImage",
+                        "role": "front_fisheye_image",
+                        "canonical_dir": "fisheye_front",
+                    },
+                    {
+                        "name": "/utlidar/robot_odom_systime",
+                        "type": "nav_msgs/msg/Odometry",
+                        "role": "localization_odom",
+                        "canonical_dir": "odom",
+                    },
+                ],
+            },
+        ),
+        build_observation(
+            observation_id="obs_sync",
+            tool="vla_infer_sync_policy",
+            raw_result={
+                "ok": True,
+                "query_raw_dir": "lidar_points",
+                "query_canonical_dir": "r32_rslidar_points",
+            },
+        ),
+        build_observation(
+            observation_id="obs_localization",
+            tool="vla_infer_localization_policy",
+            raw_result={"ok": True, "source": "odom", "requires_odom_convert": True},
+        ),
+        build_observation(
+            observation_id="obs_calibration",
+            tool="vla_inspect_calibration_assets",
+            raw_result={
+                "ok": True,
+                "recommended_sensor_params_dir": "/media/heying/hy_data1/Trajectory_visualization/Object_location_gh_v3_fisheye_five_U_add_SF_01/Data/3_param",
+                "sensor_params_status": "present",
+            },
+        ),
+        build_observation(
+            observation_id="obs_gridmap",
+            tool="vla_inspect_gridmap_artifacts",
+            raw_result={
+                "ok": True,
+                "gridmap_source": "existing_gridmap_artifact",
+                "projection_input_gridmap_ready": True,
+            },
+        ),
+    ]
+    planned = deterministic_plan_vla_workflow(
+        user_inputs={
+            "scenario": "navigation_vla",
+            "date": "20270515",
+            "selected_segments": ["20260515_102948"],
+            "scene_mode": "out",
+            "raw_root": "/media/heying/hy_data1/VLADatasets/raw_data",
+            "clip_root": "/media/heying/hy_data1/VLADatasets/clip_data",
+            "finish_root": "/media/heying/hy_data1/VLADatasets/finish_data",
+            "trajectory_root": "/media/heying/hy_data1/Trajectory_visualization/Object_location_gh_v3_fisheye_five_U_add_SF_01",
+        },
+        observations=observations,
+    )
+    invalid_plan = planned["plan"].model_dump()
+    invalid_plan["active_stages"][0]["variant"] = "not_in_catalog"
+    invalid_payload = {
+        "planning_notes": {"status": "ready_to_plan"},
+        "observations": observations,
+        "data_profile": planned["data_profile"].model_dump(),
+        "plan": invalid_plan,
+        "decisions": [{"type": "invalid_variant"}],
+    }
+    calls: list[dict] = []
+
+    monkeypatch.setattr(
+        "data_juicer_agents.capabilities.vla_workflow.react_agents._build_react_agent",
+        lambda **_: object(),
+    )
+
+    def fake_run_agent(_agent, payload):
+        json.dumps(payload, ensure_ascii=False)
+        calls.append(payload)
+        return json.dumps(invalid_payload)
+
+    monkeypatch.setattr(
+        "data_juicer_agents.capabilities.vla_workflow.react_agents._run_agent",
+        fake_run_agent,
+    )
+
+    result = execute_vla_workflow(
+        RunWorkflowInput(
+            date="20270515",
+            dry_run=True,
+            approve=False,
+            run_id="react-semantic-validation-failure",
+        ),
+        tool_context=_ctx(tmp_path),
+    )
+
+    assert result.exit_code == 2
+    assert result.payload["status"] == "failed"
+    assert Path(result.payload["artifacts"]["observations"]).is_file()
+    assert len(calls) == 4
+    assert calls[1]["validation_feedback"]["errors"][0]["target"] == "plan"
+    assert "data_profile" not in calls[1]["validation_feedback"]
+    assert "plan" not in calls[1]["validation_feedback"]
+
+
+def test_react_plan_agent_saves_raw_reply_when_json_parse_fails(
+    monkeypatch,
+    tmp_path: Path,
+):
+    malformed_reply = "{\n  planning_notes: {}\n}"
+
+    monkeypatch.setattr(
+        "data_juicer_agents.capabilities.vla_workflow.react_agents._build_react_agent",
+        lambda **_: object(),
+    )
+    monkeypatch.setattr(
+        "data_juicer_agents.capabilities.vla_workflow.react_agents._run_agent",
+        lambda _agent, _payload: malformed_reply,
+    )
+
+    result = execute_vla_workflow(
+        RunWorkflowInput(
+            date="20270515",
+            dry_run=True,
+            approve=False,
+            run_id="react-json-parse-failure",
+        ),
+        tool_context=_ctx(tmp_path),
+    )
+
+    run_dir = (
+        tmp_path
+        / "vla_workflow_runs"
+        / "20270515"
+        / "react-json-parse-failure"
+    )
+    plan_agent_steps_path = run_dir / "plan_agent_steps.jsonl"
+    step_records = [
+        json.loads(line)
+        for line in plan_agent_steps_path.read_text(encoding="utf-8").splitlines()
+    ]
+
+    assert result.exit_code == 2
+    assert result.payload["error_type"] == "react_agent_unavailable"
+    assert [record["event"] for record in step_records] == [
+        "llm_reply",
+        "parse_failed",
+    ]
+    assert step_records[0]["reply_text"] == malformed_reply
+    assert step_records[1]["error_type"] == "json_decode_error"
+    assert "Expecting property name enclosed in double quotes" in step_records[1]["message"]

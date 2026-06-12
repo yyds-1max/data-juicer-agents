@@ -31,6 +31,7 @@ from data_juicer_agents.capabilities.vla_workflow.persistence import (
     DATA_PROFILE_FILE,
     OBSERVATIONS_FILE,
     PLAN_FILE,
+    PLAN_AGENT_STEPS_FILE,
     PLANNING_NOTES_FILE,
     save_workflow_plan,
 )
@@ -382,6 +383,7 @@ def _react_planning_state(
             source_docs=state.plan_agent_memory.source_docs,
             tool_context=tool_context,
             progress_callback=progress_callback,
+            run_dir=state.run_dir,
         )
     except VLAReActPlanValidationError as exc:
         state.plan_agent_memory.planning_notes = exc.planning_notes
@@ -428,6 +430,7 @@ def _artifact_paths(state: VLAWorkflowState) -> dict[str, str]:
         "observations": str(run_dir / OBSERVATIONS_FILE),
         "data_profile": str(run_dir / DATA_PROFILE_FILE),
         "plan": str(run_dir / PLAN_FILE),
+        "plan_agent_steps": str(run_dir / PLAN_AGENT_STEPS_FILE),
         "stage_results": str(run_dir / STAGE_RESULTS_FILE),
     }
 

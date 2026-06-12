@@ -11,6 +11,7 @@ PLANNING_NOTES_FILE = "planning_notes.json"
 OBSERVATIONS_FILE = "observations.json"
 DATA_PROFILE_FILE = "data_profile.json"
 PLAN_FILE = "plan.json"
+PLAN_AGENT_STEPS_FILE = "plan_agent_steps.jsonl"
 
 
 def _json_path(run_dir: str | Path, filename: str) -> Path:
@@ -112,6 +113,7 @@ __all__ = [
     "DATA_PROFILE_FILE",
     "OBSERVATIONS_FILE",
     "PLAN_FILE",
+    "PLAN_AGENT_STEPS_FILE",
     "PLANNING_NOTES_FILE",
     "append_observation",
     "build_workflow_run_dir",
