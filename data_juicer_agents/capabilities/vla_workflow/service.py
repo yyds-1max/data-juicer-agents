@@ -83,6 +83,14 @@ def _segments_arg(value: str | list[str] | None) -> str | list[str]:
     raw = str(value or "all").strip()
     if not raw or raw.lower() == "all":
         return "all"
+    if raw.startswith("["):
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, list):
+            items = [str(item).strip() for item in parsed if str(item).strip()]
+            return items or "all"
     return [item.strip() for item in raw.split(",") if item.strip()]
 
 
@@ -359,20 +367,35 @@ def _react_planning_state(
     progress_callback: Callable[..., None] | None,
 ) -> VLAWorkflowState:
     from data_juicer_agents.capabilities.vla_workflow.react_agents import (
+        VLAReActPlanValidationError,
         run_plan_agent_react,
     )
 
     state = plan_agent_read_docs(state)
     state = save_planning_notes(state)
-    result = run_plan_agent_react(
-        user_request=state.user_request,
-        scenario=state.scenario or "navigation_vla",
-        user_inputs=state.user_inputs,
-        planning_notes=state.plan_agent_memory.planning_notes,
-        source_docs=state.plan_agent_memory.source_docs,
-        tool_context=tool_context,
-        progress_callback=progress_callback,
-    )
+    try:
+        result = run_plan_agent_react(
+            user_request=state.user_request,
+            scenario=state.scenario or "navigation_vla",
+            user_inputs=state.user_inputs,
+            planning_notes=state.plan_agent_memory.planning_notes,
+            source_docs=state.plan_agent_memory.source_docs,
+            tool_context=tool_context,
+            progress_callback=progress_callback,
+        )
+    except VLAReActPlanValidationError as exc:
+        state.plan_agent_memory.planning_notes = exc.planning_notes
+        state.observations = exc.observations
+        state = save_observations(state)
+        state.status = "failed"
+        state.messages.append(
+            {
+                "type": "plan_agent_validation_failed",
+                "reason": str(exc),
+                "validation_feedback": exc.validation_feedback,
+            }
+        )
+        return state
     state.plan_agent_memory = result["memory"]
     state.observations = list(result["observations"])
     state.data_profile = result["data_profile"]

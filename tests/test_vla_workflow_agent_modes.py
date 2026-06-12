@@ -1,8 +1,15 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
 
+from data_juicer_agents.capabilities.vla_workflow.plan_agent import build_observation
+from data_juicer_agents.capabilities.vla_workflow.plan_agent import (
+    deterministic_plan_vla_workflow,
+)
+from data_juicer_agents.capabilities.vla_workflow.react_agents import run_plan_agent_react
 from data_juicer_agents.capabilities.vla_workflow.service import execute_vla_workflow
+from data_juicer_agents.capabilities.vla_workflow.service import _segments_arg
 from data_juicer_agents.core.tool import ToolContext
 from data_juicer_agents.tools.vla.run_workflow.input import RunWorkflowInput
 
@@ -78,3 +85,272 @@ def test_explicit_deterministic_mode_uses_legacy_planning_path(tmp_path: Path):
     assert result.payload["requested_agent_mode"] == "deterministic"
     assert result.payload["fallback_used"] is False
     assert "fallback_reason" not in result.payload
+
+
+def test_segments_arg_parses_json_encoded_list_from_session_tool_call():
+    assert _segments_arg('["20260515_102948"]') == ["20260515_102948"]
+
+
+def test_react_plan_agent_repairs_invalid_profile_and_plan_draft(
+    monkeypatch,
+    tmp_path: Path,
+):
+    observations = [
+        build_observation(
+            observation_id="obs_raw_layout",
+            tool="vla_inspect_raw_layout",
+            raw_result={
+                "ok": True,
+                "date": "20270515",
+                "raw_root": "/media/heying/hy_data1/VLADatasets/raw_data",
+                "raw_date_dir": "/media/heying/hy_data1/VLADatasets/raw_data/20270515",
+                "raw_temp_dir": "/media/heying/hy_data1/VLADatasets/raw_data/20270515_temp",
+                "segments": [
+                    {
+                        "name": "20260515_102948",
+                        "path": "/media/heying/hy_data1/VLADatasets/raw_data/20270515/20260515_102948",
+                        "has_db3": True,
+                        "has_metadata_yaml": True,
+                        "db3_files": ["20260515_102948_0.db3"],
+                    }
+                ],
+            },
+        ),
+        build_observation(
+            observation_id="obs_metadata",
+            tool="vla_inspect_rosbag_metadata",
+            raw_result={
+                "ok": True,
+                "topics": [
+                    {"name": "/sport_imu", "type": "sensor_msgs/msg/Imu"},
+                    {
+                        "name": "/lidar_points",
+                        "type": "sensor_msgs/msg/PointCloud2",
+                        "role": "lidar",
+                        "canonical_dir": "r32_rslidar_points",
+                    },
+                    {
+                        "name": "/cam_video5/csi_cam/image_raw/compressed",
+                        "type": "sensor_msgs/msg/CompressedImage",
+                        "role": "front_fisheye_image",
+                        "canonical_dir": "fisheye_front",
+                    },
+                    {
+                        "name": "/utlidar/robot_odom_systime",
+                        "type": "nav_msgs/msg/Odometry",
+                        "role": "localization_odom",
+                        "canonical_dir": "odom",
+                    },
+                ],
+            },
+        ),
+        build_observation(
+            observation_id="obs_topic_schema",
+            tool="vla_classify_navigation_topic_schema",
+            raw_result={
+                "ok": True,
+                "topic_schema": "u_legacy_topics",
+                "topic_mapping_variant": "u_legacy_topics",
+                "required_roles_present": True,
+                "missing_required_roles": [],
+                "topics": [
+                    {
+                        "name": "/lidar_points",
+                        "type": "sensor_msgs/msg/PointCloud2",
+                        "role": "lidar",
+                        "canonical_dir": "r32_rslidar_points",
+                    },
+                    {
+                        "name": "/cam_video5/csi_cam/image_raw/compressed",
+                        "type": "sensor_msgs/msg/CompressedImage",
+                        "role": "front_fisheye_image",
+                        "canonical_dir": "fisheye_front",
+                    },
+                    {
+                        "name": "/utlidar/robot_odom_systime",
+                        "type": "nav_msgs/msg/Odometry",
+                        "role": "localization_odom",
+                        "canonical_dir": "odom",
+                    },
+                ],
+            },
+        ),
+        build_observation(
+            observation_id="obs_sync",
+            tool="vla_infer_sync_policy",
+            raw_result={
+                "ok": True,
+                "query_raw_dir": "lidar_points",
+                "query_canonical_dir": "r32_rslidar_points",
+                "output_dir": "sync_data",
+                "sequence_suffix": "zhigu_wuhan",
+            },
+        ),
+        build_observation(
+            observation_id="obs_processing",
+            tool="vla_inspect_processing_state",
+            raw_result={"ok": True, "has_raw_temp": False, "has_sync_data": False},
+        ),
+        build_observation(
+            observation_id="obs_localization",
+            tool="vla_infer_localization_policy",
+            raw_result={
+                "ok": True,
+                "source": "odom",
+                "canonical_output": "odom",
+                "requires_odom_convert": True,
+            },
+        ),
+        build_observation(
+            observation_id="obs_calibration",
+            tool="vla_inspect_calibration_assets",
+            raw_result={
+                "ok": True,
+                "recommended_sensor_params_dir": "/media/heying/hy_data1/Trajectory_visualization/Object_location_gh_v3_fisheye_five_U_add_SF_01/Data/3_param",
+                "sensor_params_status": "present",
+            },
+        ),
+        build_observation(
+            observation_id="obs_gridmap",
+            tool="vla_inspect_gridmap_artifacts",
+            raw_result={
+                "ok": True,
+                "raw_gridmap_topic_present": False,
+                "gridmap_source": "existing_gridmap_artifact",
+                "available_gridmap_artifacts": ["grid_map"],
+                "artifact_locations": ["finish_temp_samples"],
+                "projection_input_gridmap_ready": True,
+            },
+        ),
+    ]
+    planned = deterministic_plan_vla_workflow(
+        user_inputs={
+            "scenario": "navigation_vla",
+            "date": "20270515",
+            "selected_segments": ["20260515_102948"],
+            "scene_mode": "out",
+            "raw_root": "/media/heying/hy_data1/VLADatasets/raw_data",
+            "clip_root": "/media/heying/hy_data1/VLADatasets/clip_data",
+            "finish_root": "/media/heying/hy_data1/VLADatasets/finish_data",
+            "trajectory_root": "/media/heying/hy_data1/Trajectory_visualization/Object_location_gh_v3_fisheye_five_U_add_SF_01",
+        },
+        observations=observations,
+    )
+    valid_profile = planned["data_profile"].model_dump()
+    valid_plan = planned["plan"].model_dump()
+    valid_plan["plan_id"] = "llm_plan_after_repair"
+    invalid_payload = {
+        "planning_notes": {"status": "need_inspection"},
+        "observations": observations,
+        "data_profile": {"date": "20270515"},
+        "plan": {},
+        "decisions": [{"type": "llm_partial_payload"}],
+    }
+    repaired_payload = {
+        "planning_notes": {"status": "ready_to_plan"},
+        "observations": observations,
+        "data_profile": valid_profile,
+        "plan": valid_plan,
+        "decisions": [{"type": "llm_repaired_payload"}],
+    }
+    calls: list[dict] = []
+
+    monkeypatch.setattr(
+        "data_juicer_agents.capabilities.vla_workflow.react_agents._build_react_agent",
+        lambda **_: object(),
+    )
+
+    def fake_run_agent(_agent, payload):
+        calls.append(payload)
+        return json.dumps(invalid_payload if len(calls) == 1 else repaired_payload)
+
+    monkeypatch.setattr(
+        "data_juicer_agents.capabilities.vla_workflow.react_agents._run_agent",
+        fake_run_agent,
+    )
+
+    result = run_plan_agent_react(
+        user_request="process one segment",
+        scenario="navigation_vla",
+        user_inputs={
+            "scenario": "navigation_vla",
+            "date": "20270515",
+            "selected_segments": ["20260515_102948"],
+            "scene_mode": "out",
+            "raw_root": "/media/heying/hy_data1/VLADatasets/raw_data",
+            "clip_root": "/media/heying/hy_data1/VLADatasets/clip_data",
+            "finish_root": "/media/heying/hy_data1/VLADatasets/finish_data",
+            "trajectory_root": "/media/heying/hy_data1/Trajectory_visualization/Object_location_gh_v3_fisheye_five_U_add_SF_01",
+        },
+        planning_notes={"status": "need_inspection"},
+        source_docs=["navigation_vla.md"],
+        tool_context=_ctx(tmp_path),
+    )
+
+    assert result["data_profile"].dataset.selected_segments == ["20260515_102948"]
+    assert result["plan"].plan_id == "llm_plan_after_repair"
+    assert result["plan"].active_stages
+    assert len(calls) == 2
+    assert calls[0]["profile_schema"]
+    assert calls[0]["plan_schema"]
+    assert calls[1]["validation_feedback"]["errors"]
+
+
+def test_react_plan_agent_records_validation_failure_after_three_repairs(
+    monkeypatch,
+    tmp_path: Path,
+):
+    observation = build_observation(
+        observation_id="obs_raw_layout",
+        tool="vla_inspect_raw_layout",
+        raw_result={
+            "ok": True,
+            "date": "20270515",
+            "raw_root": "/media/heying/hy_data1/VLADatasets/raw_data",
+            "segments": [],
+        },
+    )
+    invalid_payload = {
+        "planning_notes": {"status": "need_inspection"},
+        "observations": [observation],
+        "data_profile": {"date": "20270515"},
+        "plan": {},
+        "decisions": [{"type": "still_invalid"}],
+    }
+    calls: list[dict] = []
+
+    monkeypatch.setattr(
+        "data_juicer_agents.capabilities.vla_workflow.react_agents._build_react_agent",
+        lambda **_: object(),
+    )
+
+    def fake_run_agent(_agent, payload):
+        calls.append(payload)
+        return json.dumps(invalid_payload)
+
+    monkeypatch.setattr(
+        "data_juicer_agents.capabilities.vla_workflow.react_agents._run_agent",
+        fake_run_agent,
+    )
+
+    result = execute_vla_workflow(
+        RunWorkflowInput(
+            date="20270515",
+            dry_run=True,
+            approve=False,
+            run_id="react-validation-failure",
+        ),
+        tool_context=_ctx(tmp_path),
+    )
+
+    observations_path = Path(result.payload["artifacts"]["observations"])
+    assert result.exit_code == 2
+    assert result.payload["status"] == "failed"
+    assert observations_path.is_file()
+    assert json.loads(observations_path.read_text(encoding="utf-8")) == [observation]
+    assert len(calls) == 4
+    assert calls[-1]["remaining_repair_attempts"] == 0
+    assert any(
+        message["type"] == "plan_agent_validation_failed"
+        for message in result.payload["messages"]
+    )
