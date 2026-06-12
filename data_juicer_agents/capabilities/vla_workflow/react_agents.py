@@ -42,6 +42,10 @@ _DEFAULT_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
 _DEFAULT_MODEL = "qwen3-max-2026-01-23"
 _JSON_BLOCK_RE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL | re.IGNORECASE)
 _MAX_PLAN_REPAIR_ATTEMPTS = 3
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_NAVIGATION_PLANNING_GUIDANCE_PATH = (
+    _REPO_ROOT / "docs" / "导航VLA-Plan-Agent检查工具与变体规则.md"
+)
 
 
 class VLAReActAgentUnavailable(RuntimeError):
@@ -489,6 +493,7 @@ def _plan_agent_input_payload(
         "scenario": scenario,
         "user_inputs": dict(user_inputs),
         "source_docs": source_docs,
+        "planning_guidance_markdown": _navigation_planning_guidance_markdown(),
         "planning_notes": dict(planning_notes),
         "tool_capability_catalog": [_plain(capability) for capability in catalog],
         "observations": observations,
@@ -507,6 +512,13 @@ def _plan_agent_input_payload(
             "decisions": "array",
         },
     }
+
+
+def _navigation_planning_guidance_markdown() -> str:
+    try:
+        return _NAVIGATION_PLANNING_GUIDANCE_PATH.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return ""
 
 
 def _observations_from_payload(
@@ -651,11 +663,15 @@ def _plan_sys_prompt() -> str:
         "You are VLAPlanReActAgent, a real Plan-Agent for navigation VLA data processing. "
         "Use only the provided read-only planning tools. Do not execute write, external, "
         "or long-running processing tools. Read the user request, planning notes, tool "
-        "capability catalog, profile_schema, plan_schema, current drafts, validation "
-        "feedback, and available observations. Call inspection tools until the data shape "
-        "is clear. Then return one JSON object only with planning_notes, observations, "
-        "data_profile, plan, and decisions. Fill NavigationVLADataProfile from observed "
-        "facts and choose VLAWorkflowPlan stage variants from the capability catalog. "
+        "capability catalog, planning_guidance_markdown, profile_schema, plan_schema, "
+        "current drafts, validation feedback, and available observations. "
+        "必须优先遵守导航 VLA 规划规则文档的指导, which is provided in the "
+        "planning_guidance_markdown payload field. source_docs 只是引用名，不代表正文. "
+        "Call inspection tools until the data shape is clear. Then return one JSON object "
+        "only with planning_notes, observations, data_profile, plan, and decisions. "
+        "最终输出必须是严格 JSON, 不要 markdown, 不要解释文字, 不要 {...} 或 [...] 占位符. "
+        "Fill NavigationVLADataProfile from observed facts and choose VLAWorkflowPlan "
+        "stage variants from the capability catalog and planning guidance Markdown. "
         "When validation_feedback is present, repair only the invalid or missing fields "
         "and keep valid evidence-backed fields."
     )

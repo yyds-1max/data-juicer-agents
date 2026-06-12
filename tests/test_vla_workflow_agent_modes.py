@@ -7,6 +7,7 @@ from data_juicer_agents.capabilities.vla_workflow.plan_agent import build_observ
 from data_juicer_agents.capabilities.vla_workflow.plan_agent import (
     deterministic_plan_vla_workflow,
 )
+from data_juicer_agents.capabilities.vla_workflow.react_agents import _plan_sys_prompt
 from data_juicer_agents.capabilities.vla_workflow.react_agents import run_plan_agent_react
 from data_juicer_agents.capabilities.vla_workflow.service import execute_vla_workflow
 from data_juicer_agents.capabilities.vla_workflow.service import _segments_arg
@@ -293,7 +294,22 @@ def test_react_plan_agent_repairs_invalid_profile_and_plan_draft(
     assert len(calls) == 2
     assert calls[0]["profile_schema"]
     assert calls[0]["plan_schema"]
+    guidance_path = Path("docs/导航VLA-Plan-Agent检查工具与变体规则.md")
+    guidance_markdown = guidance_path.read_text(encoding="utf-8")
+    assert calls[0]["planning_guidance_markdown"] == guidance_markdown
+    assert calls[1]["planning_guidance_markdown"] == guidance_markdown
     assert calls[1]["validation_feedback"]["errors"]
+
+
+def test_plan_sys_prompt_prioritizes_guidance_markdown():
+    prompt = _plan_sys_prompt()
+
+    assert "必须优先遵守导航 VLA 规划规则文档的指导" in prompt
+    assert "source_docs 只是引用名，不代表正文" in prompt
+    assert "严格 JSON" in prompt
+    assert "不要 markdown" in prompt
+    assert "不要解释文字" in prompt
+    assert "不要 {...} 或 [...] 占位符" in prompt
 
 
 def test_react_plan_agent_records_validation_failure_after_three_repairs(
