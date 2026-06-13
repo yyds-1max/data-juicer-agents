@@ -131,6 +131,18 @@ NAVIGATION_TOOL_CAPABILITIES: list[ToolCapability] = [
         variants=[_variant("default")],
     ),
     _capability(
+        tool="vla_list_tool_capability_catalog",
+        stage_kind="list_tool_capability_catalog",
+        effects="read",
+        variants=[_variant("default")],
+    ),
+    _capability(
+        tool="vla_validate_navigation_data_profile",
+        stage_kind="validate_navigation_data_profile",
+        effects="read",
+        variants=[_variant("default")],
+    ),
+    _capability(
         tool="vla_prepare_raw_temp",
         stage_kind="prepare_raw_temp",
         effects="write",

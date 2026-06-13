@@ -22,6 +22,7 @@ from data_juicer_agents.capabilities.vla_workflow.graph import (
     route_after_stage,
     save_observations,
     save_planning_notes,
+    save_workflow_plan_node,
     select_next_stage,
     update_state,
     validate_data_profile,
@@ -406,7 +407,7 @@ def _react_planning_state(
     state = validate_data_profile(state)
     if state.status == "failed":
         return state
-    state = generate_workflow_plan(state)
+    state = save_workflow_plan_node(state)
     state = validate_plan_node(state)
     if state.status == "failed":
         return state

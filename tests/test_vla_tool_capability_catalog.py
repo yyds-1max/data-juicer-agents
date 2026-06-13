@@ -13,6 +13,9 @@ from data_juicer_agents.core.tool import ToolContext, ToolSpec, list_tool_specs
 from data_juicer_agents.tools.vla.list_tool_capability_catalog.tool import (
     VLA_LIST_TOOL_CAPABILITY_CATALOG,
 )
+from data_juicer_agents.tools.vla.validate_navigation_data_profile.tool import (
+    VLA_VALIDATE_NAVIGATION_DATA_PROFILE,
+)
 
 
 def _variant(capability: ToolCapability, variant_id: str) -> ToolVariant:
@@ -140,3 +143,26 @@ def test_list_catalog_tool_is_auto_discovered():
     names = {spec.name for spec in list_tool_specs(tags=["vla"])}
 
     assert "vla_list_tool_capability_catalog" in names
+
+
+def test_validate_navigation_data_profile_tool_is_registered_for_plan_agent():
+    spec = VLA_VALIDATE_NAVIGATION_DATA_PROFILE
+
+    assert isinstance(spec, ToolSpec)
+    assert spec.name == "vla_validate_navigation_data_profile"
+    assert spec.effects == "read"
+    assert spec.confirmation == "none"
+    assert {"vla", "read", "planning"}.issubset(set(spec.tags))
+    assert "vla_validate_navigation_data_profile" in {
+        item.name for item in list_tool_specs(tags=["vla"])
+    }
+
+    capability = find_tool_capability(
+        list_tool_capabilities(scenario="navigation_vla"),
+        "vla_validate_navigation_data_profile",
+    )
+    assert capability.stage_kind == "validate_navigation_data_profile"
+    assert capability.plan_agent_allowed is True
+    assert capability.executor_agent_allowed is False
+    assert capability.effects == "read"
+    assert _variant(capability, "default").status == "available"

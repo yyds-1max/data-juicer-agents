@@ -12,7 +12,12 @@ class PlanAgentMemory(BaseModel):
     planning_notes: dict[str, Any] = Field(default_factory=dict)
     pending_observations: list[str] = Field(default_factory=list)
     observations: list[dict[str, Any]] = Field(default_factory=list)
+    profile_draft: dict[str, Any] = Field(default_factory=dict)
     data_profile_draft: dict[str, Any] = Field(default_factory=dict)
+    plan_draft: dict[str, Any] = Field(default_factory=dict)
+    profile_validation_feedback: dict[str, Any] = Field(default_factory=dict)
+    plan_validation_feedback: dict[str, Any] = Field(default_factory=dict)
+    current_phase: str | None = None
     decisions: list[dict[str, Any]] = Field(default_factory=list)
     unknowns: list[str] = Field(default_factory=list)
     ready_to_plan: bool = False

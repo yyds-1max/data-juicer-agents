@@ -276,6 +276,32 @@ def generate_workflow_plan(
     return updated
 
 
+def save_workflow_plan_node(
+    state: VLAWorkflowState | Mapping[str, Any],
+) -> VLAWorkflowState:
+    updated = _as_state(state)
+    if updated.plan is None:
+        updated.status = "failed"
+        _add_message(updated, "workflow_plan_save_failed", reason="missing_plan")
+        return updated
+    if updated.run_dir:
+        updated.plan_ref = str(
+            persist_workflow_plan(
+                Path(updated.run_dir),
+                updated.plan.model_dump(),
+            ).name
+        )
+    else:
+        updated.plan_ref = PLAN_FILE
+    _add_message(
+        updated,
+        "workflow_plan_saved",
+        plan_id=updated.plan.plan_id,
+        ref=updated.plan_ref,
+    )
+    return updated
+
+
 def validate_plan_node(
     state: VLAWorkflowState | Mapping[str, Any],
     *,
@@ -883,6 +909,7 @@ __all__ = [
     "route_after_stage",
     "save_observations",
     "save_planning_notes",
+    "save_workflow_plan_node",
     "select_next_stage",
     "update_state",
     "validate_data_profile",

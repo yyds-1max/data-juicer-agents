@@ -53,6 +53,9 @@ from data_juicer_agents.tools.vla.run_projection_and_trajectory import (
 )
 from data_juicer_agents.tools.vla.run_tracking import VLA_RUN_TRACKING
 from data_juicer_agents.tools.vla.validate_outputs import VLA_VALIDATE_OUTPUTS
+from data_juicer_agents.tools.vla.validate_navigation_data_profile import (
+    VLA_VALIDATE_NAVIGATION_DATA_PROFILE,
+)
 
 
 TOOL_SPECS: List[ToolSpec] = [
@@ -70,6 +73,7 @@ TOOL_SPECS: List[ToolSpec] = [
     VLA_INSPECT_GRIDMAP_ARTIFACTS,
     VLA_INSPECT_TRAJECTORY_SCRIPT_VARIANTS,
     VLA_LIST_TOOL_CAPABILITY_CATALOG,
+    VLA_VALIDATE_NAVIGATION_DATA_PROFILE,
     VLA_PREPARE_RAW_TEMP,
     VLA_EXTRACT_AND_SYNC,
     VLA_LIST_CLIP_SEGMENTS,

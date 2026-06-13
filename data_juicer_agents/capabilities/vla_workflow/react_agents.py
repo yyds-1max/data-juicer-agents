@@ -98,7 +98,37 @@ def run_plan_agent_react(
         scenario=scenario
     )
     tool_specs = _plan_tool_specs(resolved_catalog)
-    agent = _build_react_agent(
+    available_tools = _available_tool_payload(tool_specs)
+    profile_agent = _build_react_agent(
+        name="VLAPlanReActAgent",
+        sys_prompt=_profile_sys_prompt(),
+        agent_kind="plan",
+        tool_specs=tool_specs,
+        tool_context=tool_context,
+        progress_callback=progress_callback,
+        observation_collector=collected_observations,
+    )
+    base_memory = PlanAgentMemory(
+        scenario=scenario,
+        user_inputs=dict(user_inputs),
+        source_docs=list(source_docs),
+        planning_notes=dict(planning_notes),
+        current_phase="profile",
+    )
+    profile_result = _run_profile_stage(
+        agent=profile_agent,
+        user_request=user_request,
+        scenario=scenario,
+        user_inputs=user_inputs,
+        source_docs=source_docs,
+        memory=base_memory,
+        catalog=resolved_catalog,
+        available_tools=available_tools,
+        collected_observations=collected_observations,
+        run_dir=run_dir,
+    )
+
+    plan_agent = _build_react_agent(
         name="VLAPlanReActAgent",
         sys_prompt=_plan_sys_prompt(),
         agent_kind="plan",
@@ -107,29 +137,50 @@ def run_plan_agent_react(
         progress_callback=progress_callback,
         observation_collector=collected_observations,
     )
-    observations: list[dict[str, Any]] = []
-    profile_draft: dict[str, Any] = {}
-    plan_draft: dict[str, Any] = {}
-    validation_feedback: dict[str, Any] | None = None
-    memory = PlanAgentMemory(
+    return _run_plan_stage(
+        agent=plan_agent,
+        user_request=user_request,
         scenario=scenario,
-        user_inputs=dict(user_inputs),
-        source_docs=list(source_docs),
-        planning_notes=dict(planning_notes),
+        user_inputs=user_inputs,
+        source_docs=source_docs,
+        memory=profile_result["memory"],
+        catalog=resolved_catalog,
+        available_tools=available_tools,
+        collected_observations=collected_observations,
+        data_profile=profile_result["data_profile"],
+        observations=profile_result["observations"],
+        run_dir=run_dir,
     )
 
+
+def _run_profile_stage(
+    *,
+    agent: Any,
+    user_request: str,
+    scenario: str,
+    user_inputs: Mapping[str, Any],
+    source_docs: list[str],
+    memory: PlanAgentMemory,
+    catalog: list[ToolCapability],
+    available_tools: list[dict[str, Any]],
+    collected_observations: list[dict[str, Any]],
+    run_dir: str | Path | None,
+) -> dict[str, Any]:
+    observations: list[dict[str, Any]] = list(memory.observations)
+    profile_draft: dict[str, Any] = dict(memory.profile_draft or memory.data_profile_draft)
+    validation_feedback: dict[str, Any] | None = None
     for attempt in range(_MAX_PLAN_REPAIR_ATTEMPTS + 1):
         remaining_repair_attempts = max(_MAX_PLAN_REPAIR_ATTEMPTS - attempt, 0)
-        input_payload = _plan_agent_input_payload(
+        input_payload = _profile_agent_input_payload(
             user_request=user_request,
             scenario=scenario,
             user_inputs=user_inputs,
             source_docs=source_docs,
             planning_notes=memory.planning_notes,
-            catalog=resolved_catalog,
+            catalog=catalog,
+            available_tools=available_tools,
             observations=observations,
             profile_draft=profile_draft,
-            plan_draft=plan_draft,
             validation_feedback=validation_feedback,
             repair_attempt=attempt,
         )
@@ -138,7 +189,7 @@ def run_plan_agent_react(
         except VLAReActAgentUnavailable as exc:
             _append_plan_agent_step(
                 run_dir,
-                event="agent_call_failed",
+                event="profile_agent_call_failed",
                 attempt=attempt,
                 remaining_repair_attempts=remaining_repair_attempts,
                 error_type="agent_call_failed",
@@ -147,7 +198,7 @@ def run_plan_agent_react(
             raise
         _append_plan_agent_step(
             run_dir,
-            event="llm_reply",
+            event="profile_llm_reply",
             attempt=attempt,
             remaining_repair_attempts=remaining_repair_attempts,
             reply_text=reply_text,
@@ -158,7 +209,7 @@ def run_plan_agent_react(
             cause = exc.__cause__
             _append_plan_agent_step(
                 run_dir,
-                event="parse_failed",
+                event="profile_parse_failed",
                 attempt=attempt,
                 remaining_repair_attempts=remaining_repair_attempts,
                 error_type=(
@@ -170,27 +221,154 @@ def run_plan_agent_react(
             )
             raise
         observations = _observations_from_payload(payload, collected_observations)
-        profile_draft = dict(payload.get("data_profile") or profile_draft)
-        plan_draft = dict(payload.get("plan") or plan_draft)
+        profile_draft = dict(
+            payload.get("profile_draft") or payload.get("data_profile") or profile_draft
+        )
         memory = PlanAgentMemory(
             scenario=scenario,
             user_inputs=dict(user_inputs),
             source_docs=list(source_docs),
             planning_notes=dict(payload.get("planning_notes") or memory.planning_notes),
             observations=observations,
+            profile_draft=profile_draft,
             data_profile_draft=profile_draft,
+            profile_validation_feedback=dict(validation_feedback or {}),
+            current_phase="profile",
             decisions=list(payload.get("decisions") or memory.decisions),
         )
-        validation = _validate_plan_agent_drafts(
-            data_profile_payload=profile_draft,
-            plan_payload=plan_draft,
-            catalog=resolved_catalog,
-        )
+        validation = _validate_profile_draft(profile_draft)
         if validation["ok"]:
-            memory.ready_to_plan = True
+            memory.current_phase = "plan"
+            memory.profile_validation_feedback = {}
             _append_plan_agent_step(
                 run_dir,
-                event="validation_passed",
+                event="profile_validation_passed",
+                attempt=attempt,
+                remaining_repair_attempts=remaining_repair_attempts,
+                observation_count=len(observations),
+            )
+            return {
+                "memory": memory,
+                "planning_notes": memory.planning_notes,
+                "observations": observations,
+                "data_profile": validation["data_profile"],
+            }
+        validation_feedback = _validation_feedback_payload(validation)
+        memory.profile_validation_feedback = validation_feedback
+        _append_plan_agent_step(
+            run_dir,
+            event="profile_validation_failed",
+            attempt=attempt,
+            remaining_repair_attempts=remaining_repair_attempts,
+            validation_feedback=validation_feedback,
+        )
+
+    raise VLAReActPlanValidationError(
+        (
+            "VLA Plan-Agent profile draft validation failed after "
+            f"{_MAX_PLAN_REPAIR_ATTEMPTS} repair attempts: "
+            f"{json.dumps(validation_feedback, ensure_ascii=False)}"
+        ),
+        planning_notes=memory.planning_notes,
+        observations=observations,
+        validation_feedback=validation_feedback,
+    )
+
+
+def _run_plan_stage(
+    *,
+    agent: Any,
+    user_request: str,
+    scenario: str,
+    user_inputs: Mapping[str, Any],
+    source_docs: list[str],
+    memory: PlanAgentMemory,
+    catalog: list[ToolCapability],
+    available_tools: list[dict[str, Any]],
+    collected_observations: list[dict[str, Any]],
+    data_profile: NavigationVLADataProfile,
+    observations: list[dict[str, Any]],
+    run_dir: str | Path | None,
+) -> dict[str, Any]:
+    plan_draft: dict[str, Any] = dict(memory.plan_draft)
+    validation_feedback: dict[str, Any] | None = None
+    for attempt in range(_MAX_PLAN_REPAIR_ATTEMPTS + 1):
+        remaining_repair_attempts = max(_MAX_PLAN_REPAIR_ATTEMPTS - attempt, 0)
+        input_payload = _workflow_plan_agent_input_payload(
+            user_request=user_request,
+            scenario=scenario,
+            user_inputs=user_inputs,
+            source_docs=source_docs,
+            planning_notes=memory.planning_notes,
+            catalog=catalog,
+            available_tools=available_tools,
+            observations=observations,
+            data_profile=data_profile,
+            plan_draft=plan_draft,
+            validation_feedback=validation_feedback,
+            repair_attempt=attempt,
+        )
+        try:
+            reply_text = _run_agent(agent, input_payload)
+        except VLAReActAgentUnavailable as exc:
+            _append_plan_agent_step(
+                run_dir,
+                event="plan_agent_call_failed",
+                attempt=attempt,
+                remaining_repair_attempts=remaining_repair_attempts,
+                error_type="agent_call_failed",
+                message=str(exc),
+            )
+            raise
+        _append_plan_agent_step(
+            run_dir,
+            event="plan_llm_reply",
+            attempt=attempt,
+            remaining_repair_attempts=remaining_repair_attempts,
+            reply_text=reply_text,
+        )
+        try:
+            payload = _parse_json_object(reply_text)
+        except VLAReActAgentUnavailable as exc:
+            cause = exc.__cause__
+            _append_plan_agent_step(
+                run_dir,
+                event="plan_parse_failed",
+                attempt=attempt,
+                remaining_repair_attempts=remaining_repair_attempts,
+                error_type=(
+                    "json_decode_error"
+                    if isinstance(cause, json.JSONDecodeError)
+                    else "invalid_json_response"
+                ),
+                message=str(exc),
+            )
+            raise
+        observations = _observations_from_payload(payload, collected_observations)
+        plan_draft = dict(payload.get("plan_draft") or payload.get("plan") or plan_draft)
+        decisions = list(memory.decisions)
+        decisions.extend(list(payload.get("decisions") or []))
+        memory = PlanAgentMemory(
+            scenario=scenario,
+            user_inputs=dict(user_inputs),
+            source_docs=list(source_docs),
+            planning_notes=dict(payload.get("planning_notes") or memory.planning_notes),
+            observations=observations,
+            profile_draft=data_profile.model_dump(),
+            data_profile_draft=data_profile.model_dump(),
+            plan_draft=plan_draft,
+            plan_validation_feedback=dict(validation_feedback or {}),
+            current_phase="plan",
+            decisions=decisions,
+        )
+        validation = _validate_plan_draft(plan_draft, catalog=catalog)
+        if validation["ok"]:
+            memory.ready_to_plan = True
+            memory.current_phase = "done"
+            memory.plan_validation_feedback = {}
+            _append_plan_agent_step(
+                run_dir,
+                event="plan_validation_passed",
                 attempt=attempt,
                 remaining_repair_attempts=remaining_repair_attempts,
                 observation_count=len(observations),
@@ -200,13 +378,14 @@ def run_plan_agent_react(
                 "memory": memory,
                 "planning_notes": memory.planning_notes,
                 "observations": observations,
-                "data_profile": validation["data_profile"],
+                "data_profile": data_profile,
                 "plan": validation["plan"],
             }
         validation_feedback = _validation_feedback_payload(validation)
+        memory.plan_validation_feedback = validation_feedback
         _append_plan_agent_step(
             run_dir,
-            event="validation_failed",
+            event="plan_validation_failed",
             attempt=attempt,
             remaining_repair_attempts=remaining_repair_attempts,
             validation_feedback=validation_feedback,
@@ -214,7 +393,7 @@ def run_plan_agent_react(
 
     raise VLAReActPlanValidationError(
         (
-            "VLA Plan-Agent draft validation failed after "
+            "VLA Plan-Agent plan draft validation failed after "
             f"{_MAX_PLAN_REPAIR_ATTEMPTS} repair attempts: "
             f"{json.dumps(validation_feedback, ensure_ascii=False)}"
         ),
@@ -474,7 +653,7 @@ def _run_awaitable(awaitable: Any) -> Any:
     return result.get("value")
 
 
-def _plan_agent_input_payload(
+def _profile_agent_input_payload(
     *,
     user_request: str,
     scenario: str,
@@ -482,24 +661,65 @@ def _plan_agent_input_payload(
     source_docs: list[str],
     planning_notes: Mapping[str, Any],
     catalog: list[ToolCapability],
+    available_tools: list[dict[str, Any]],
     observations: list[dict[str, Any]],
     profile_draft: Mapping[str, Any],
-    plan_draft: Mapping[str, Any],
     validation_feedback: Mapping[str, Any] | None,
     repair_attempt: int,
 ) -> dict[str, Any]:
     return {
+        "phase": "profile",
         "user_request": user_request,
         "scenario": scenario,
         "user_inputs": dict(user_inputs),
         "source_docs": source_docs,
         "planning_guidance_markdown": _navigation_planning_guidance_markdown(),
         "planning_notes": dict(planning_notes),
+        "available_tools": list(available_tools),
         "tool_capability_catalog": [_plain(capability) for capability in catalog],
         "observations": observations,
         "profile_schema": NavigationVLADataProfile.model_json_schema(),
-        "plan_schema": VLAWorkflowPlan.model_json_schema(),
         "profile_draft": dict(profile_draft),
+        "validation_feedback": _validation_feedback_payload(validation_feedback),
+        "repair_attempt": repair_attempt,
+        "remaining_repair_attempts": max(_MAX_PLAN_REPAIR_ATTEMPTS - repair_attempt, 0),
+        "required_output_schema": {
+            "planning_notes": "object",
+            "observations": "array",
+            "profile_draft": "NavigationVLADataProfile draft object",
+            "decisions": "array",
+        },
+    }
+
+
+def _workflow_plan_agent_input_payload(
+    *,
+    user_request: str,
+    scenario: str,
+    user_inputs: Mapping[str, Any],
+    source_docs: list[str],
+    planning_notes: Mapping[str, Any],
+    catalog: list[ToolCapability],
+    available_tools: list[dict[str, Any]],
+    observations: list[dict[str, Any]],
+    data_profile: NavigationVLADataProfile,
+    plan_draft: Mapping[str, Any],
+    validation_feedback: Mapping[str, Any] | None,
+    repair_attempt: int,
+) -> dict[str, Any]:
+    return {
+        "phase": "plan",
+        "user_request": user_request,
+        "scenario": scenario,
+        "user_inputs": dict(user_inputs),
+        "source_docs": source_docs,
+        "planning_guidance_markdown": _navigation_planning_guidance_markdown(),
+        "planning_notes": dict(planning_notes),
+        "available_tools": list(available_tools),
+        "tool_capability_catalog": [_plain(capability) for capability in catalog],
+        "observations": observations,
+        "validated_profile": data_profile.model_dump(),
+        "plan_schema": VLAWorkflowPlan.model_json_schema(),
         "plan_draft": dict(plan_draft),
         "validation_feedback": _validation_feedback_payload(validation_feedback),
         "repair_attempt": repair_attempt,
@@ -507,8 +727,7 @@ def _plan_agent_input_payload(
         "required_output_schema": {
             "planning_notes": "object",
             "observations": "array",
-            "data_profile": "NavigationVLADataProfile object",
-            "plan": "VLAWorkflowPlan object",
+            "plan_draft": "VLAWorkflowPlan draft object",
             "decisions": "array",
         },
     }
@@ -531,16 +750,12 @@ def _observations_from_payload(
     return [dict(item) for item in raw if isinstance(item, Mapping)]
 
 
-def _validate_plan_agent_drafts(
-    *,
+def _validate_profile_draft(
     data_profile_payload: Mapping[str, Any],
-    plan_payload: Mapping[str, Any],
-    catalog: list[ToolCapability],
 ) -> dict[str, Any]:
     errors: list[dict[str, Any]] = []
     warnings: list[dict[str, Any]] = []
     data_profile: NavigationVLADataProfile | None = None
-    plan: VLAWorkflowPlan | None = None
 
     try:
         data_profile = NavigationVLADataProfile.model_validate(
@@ -565,6 +780,23 @@ def _validate_plan_agent_drafts(
             {"target": "data_profile", **dict(item)}
             for item in profile_validation["warnings"]
         )
+
+    return {
+        "ok": not errors,
+        "errors": errors,
+        "warnings": warnings,
+        "data_profile": data_profile,
+    }
+
+
+def _validate_plan_draft(
+    plan_payload: Mapping[str, Any],
+    *,
+    catalog: list[ToolCapability],
+) -> dict[str, Any]:
+    errors: list[dict[str, Any]] = []
+    warnings: list[dict[str, Any]] = []
+    plan: VLAWorkflowPlan | None = None
 
     try:
         plan = VLAWorkflowPlan.model_validate(dict(plan_payload))
@@ -592,7 +824,6 @@ def _validate_plan_agent_drafts(
         "ok": not errors,
         "errors": errors,
         "warnings": warnings,
-        "data_profile": data_profile,
         "plan": plan,
     }
 
@@ -610,6 +841,18 @@ def _plan_tool_specs(catalog: list[ToolCapability]) -> list[ToolSpec]:
         except KeyError:
             continue
     return specs
+
+
+def _available_tool_payload(tool_specs: list[ToolSpec]) -> list[dict[str, Any]]:
+    return [
+        {
+            "name": spec.name,
+            "description": spec.description,
+            "effects": spec.effects,
+            "input_schema": spec.input_model.model_json_schema(),
+        }
+        for spec in tool_specs
+    ]
 
 
 def _parse_json_object(text: str) -> dict[str, Any]:
@@ -658,22 +901,67 @@ def _emit(
         progress_callback(event)
 
 
+def _profile_sys_prompt() -> str:
+    return (
+        "You are VLAPlanReActAgent in the profile phase for navigation VLA data "
+        "processing. Use only the provided read-only planning tools. Do not execute "
+        "write, external, or long-running processing tools. Read the user request, "
+        "planning notes, tool capability catalog, available_tools, "
+        "planning_guidance_markdown, profile_schema, current profile_draft, "
+        "validation feedback, and available observations.  "
+        "The instructions in the navigation VLA planning rules document, "
+        "provided in planning_guidance_markdown, must be followed with the highest priority."
+        "Call inspection tools until the data shape is clear. Then return one "
+        "strict JSON object only with planning_notes, observations, profile_draft, "
+        "and decisions. Do not return plan or plan_draft in this phase. "
+        "Do not fabricate observations. Observations must only come from the results of actual tool calls."
+        "'profile_draft' must be filled in only based on the collected observations."
+        "'evidence' must reference real observation_id values."
+        "When validation feedback is provided, only fix invalid or missing fields;"
+        "do not modify fields that are already supported by existing evidence."
+        "The final output must be strict JSON, with no Markdown, "
+        "no explanatory text, and no `{...}` or `[...]` placeholders."
+        "Fill the NavigationVLADataProfile draft only from observed facts. When "
+        "validation_feedback is present, repair only invalid or missing profile "
+        "fields and keep valid evidence-backed fields."
+    )
+
+
 def _plan_sys_prompt() -> str:
     return (
-        "You are VLAPlanReActAgent, a real Plan-Agent for navigation VLA data processing. "
+        "You are VLAPlanReActAgent in the workflow plan phase for navigation VLA data processing. "
+        "Your task in this phase is to fill and repair `plan_draft`, which must be a draft of "
+        "VLAWorkflowPlan. "
         "Use only the provided read-only planning tools. Do not execute write, external, "
-        "or long-running processing tools. Read the user request, planning notes, tool "
-        "capability catalog, planning_guidance_markdown, profile_schema, plan_schema, "
-        "current drafts, validation feedback, and available observations. "
-        "必须优先遵守导航 VLA 规划规则文档的指导, which is provided in the "
-        "planning_guidance_markdown payload field. source_docs 只是引用名，不代表正文. "
-        "Call inspection tools until the data shape is clear. Then return one JSON object "
-        "only with planning_notes, observations, data_profile, plan, and decisions. "
-        "最终输出必须是严格 JSON, 不要 markdown, 不要解释文字, 不要 {...} 或 [...] 占位符. "
-        "Fill NavigationVLADataProfile from observed facts and choose VLAWorkflowPlan "
-        "stage variants from the capability catalog and planning guidance Markdown. "
-        "When validation_feedback is present, repair only the invalid or missing fields "
-        "and keep valid evidence-backed fields."
+        "or long-running processing tools. "
+        "Read the user request, planning notes, tool capability catalog, available_tools, "
+        "planning_guidance_markdown, validated_profile, plan_schema, current plan_draft, "
+        "validation feedback, and available observations. "
+        "The instructions in the navigation VLA planning rules document, provided in "
+        "planning_guidance_markdown, must be followed with the highest priority. "
+        "source_docs contains reference names only; it is not the document body. "
+        "The validated_profile has already passed deterministic validation; do not modify, "
+        "replace, reinterpret, or regenerate it. "
+        "Build `plan_draft` only from validated_profile, collected observations, the tool "
+        "capability catalog, available tool descriptions, and the planning guidance Markdown. "
+        "Do not fabricate observations. Observations must only come from the results of actual "
+        "tool calls. "
+        "Do not invent tools, stage kinds, variants, effects, or execution paths. Every active "
+        "stage must use a tool and variant that are available in the tool capability catalog. "
+        "Stage variants in `plan_draft` must be consistent with "
+        "`validated_profile.stage_variants`. If a profile stage variant decision exists for a "
+        "stage, use that variant and set decision_ref to "
+        "`data_profile.stage_variants.<stage_kind>`. "
+        "`plan_draft` must follow plan_schema. Its stages must contain planning-level "
+        "fields only, such as id, stage_kind, tool, variant, effects, decision_ref, and "
+        "status. Do not include concrete tool arguments, command lines, shell snippets, "
+        "file-copy details, or runtime parameters in `plan_draft`. "
+        "When validation_feedback is present, repair only invalid or missing plan fields and "
+        "keep valid evidence-backed fields. "
+        "Then return one strict JSON object only with planning_notes, observations, plan_draft, "
+        "and decisions. Do not return profile_draft or data_profile in this phase. "
+        "The final output must be strict JSON, with no Markdown, no explanatory text, and no "
+        "`{...}` or `[...]` placeholders."
     )
 
 
